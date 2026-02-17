@@ -110,6 +110,12 @@ BRIGHTNESS_STEP = 1
 # ─────────────────────────────────────────────
 DEFAULT_ROON_CORE_ID = "44fe722d-c19d-4786-ab03-e23feb2e6148"
 
+# ─────────────────────────────────────────────
+# Sensor labels for last-sent speaker tracking
+# ─────────────────────────────────────────────
+LAST_DEFAULT_OUTPUT   = "last_default_output"
+LAST_QUICKPLAY        = "last_quickplay"
+
 ROON_SEED_MAPPINGS = {
     "Airstream HomePods": "16017c4634641ca696c652e7e11ded6e35f2",
     "Back Field":         "16013ce5484620314686cb3284cf1413498c",
