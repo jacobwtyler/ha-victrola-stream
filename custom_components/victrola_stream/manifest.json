@@ -1,7 +1,7 @@
 {
   "domain": "victrola_stream",
   "name": "Victrola Stream",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "documentation": "https://github.com/jacobwtyler/ha-victrola-stream",
   "issue_tracker": "https://github.com/jacobwtyler/ha-victrola-stream/issues",
   "codeowners": ["@jacobwtyler"],

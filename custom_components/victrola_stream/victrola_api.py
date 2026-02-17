@@ -173,6 +173,69 @@ class VictrolaAPI:
     # path: powermanager:goReboot
     # ─────────────────────────────────────────────
 
+    # ─────────────────────────────────────────────
+    # Full state poll (all paths confirmed readable)
+    # ─────────────────────────────────────────────
+
+    async def async_get_full_state(self) -> dict:
+        """Poll all readable settings from the device."""
+        state = {}
+
+        try:
+            async with aiohttp.ClientSession() as session:
+
+                async def _get(path: str) -> list | None:
+                    try:
+                        async with session.post(
+                            f"{self.base_url}/api/getData",
+                            json={"path": path, "roles": ["value"]},
+                            headers={"Content-Type": "application/json"},
+                            timeout=aiohttp.ClientTimeout(total=5),
+                        ) as r:
+                            if r.status == 200:
+                                data = await r.json(content_type=None)
+                                if isinstance(data, list) and data and data[0] is not None:
+                                    return data[0]
+                    except Exception as e:
+                        _LOGGER.debug("getData %s failed: %s", path, e)
+                    return None
+
+                # Audio quality -> {"forceLowBitrate": "losslessQuality", "type": "forceLowBitrate"}
+                d = await _get("settings:/victrola/forceLowBitrate")
+                if d:
+                    state["audio_quality_api"] = d.get("forceLowBitrate")
+
+                # Audio latency -> {"adchlsLatency": "med", "type": "adchlsLatency"}
+                d = await _get("settings:/victrola/wirelessAudioDelay")
+                if d:
+                    state["audio_latency_api"] = d.get("adchlsLatency")
+
+                # Knob brightness -> {"type": "i32_", "i32_": 50}
+                d = await _get("settings:/victrola/lightBrightness")
+                if d:
+                    state["knob_brightness"] = int(d.get("i32_", 100))
+
+                # Source enabled states -> {"bool_": True, "type": "bool_"}
+                for source, path in [
+                    ("roon",      "settings:/victrola/roonEnabled"),
+                    ("sonos",     "settings:/victrola/sonosEnabled"),
+                    ("upnp",      "settings:/victrola/upnpEnabled"),
+                    ("bluetooth", "settings:/victrola/bluetoothEnabled"),
+                ]:
+                    d = await _get(path)
+                    if d:
+                        state[f"{source}_enabled"] = bool(d.get("bool_", False))
+
+                # Autoplay
+                d = await _get("settings:/victrola/autoplay")
+                if d:
+                    state["autoplay"] = bool(d.get("bool_", True))
+
+        except Exception as err:
+            _LOGGER.error("get_full_state error: %s", err)
+
+        return state
+
     async def async_reboot(self) -> bool:
         """Reboot the Victrola device."""
         _LOGGER.warning("Sending reboot command to Victrola at %s", self.host)
