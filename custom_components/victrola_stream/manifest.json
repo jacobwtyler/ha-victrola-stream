@@ -1,0 +1,13 @@
+{
+  "domain": "victrola_stream",
+  "name": "Victrola Stream",
+  "version": "0.1.0",
+  "documentation": "https://github.com/jacobwtyler/ha-victrola-stream",
+  "issue_tracker": "https://github.com/jacobwtyler/ha-victrola-stream/issues",
+  "codeowners": ["@jacobwtyler"],
+  "config_flow": true,
+  "dependencies": [],
+  "requirements": [],
+  "iot_class": "local_polling",
+  "integration_type": "device"
+}
