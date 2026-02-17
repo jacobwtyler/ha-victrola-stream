@@ -1,4 +1,4 @@
-"""Sensor platform - connection, settings, quickplay and default output sensors."""
+"""Sensor platform - all values polled from device."""
 from __future__ import annotations
 import logging
 from homeassistant.components.sensor import SensorEntity, SensorStateClass
@@ -16,11 +16,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     entities = [
         VictrolaConnectionSensor(data, entry),
         VictrolaCurrentSourceSensor(data, entry),
+        VictrolaDefaultSpeakerSensor(data, entry),       # from ui: getRows (authoritative)
+        VictrolaCurrentQuickPlaySensor(data, entry),     # from speakerQuickplay getRows (preferred=True)
         VictrolaAudioQualitySensor(data, entry),
         VictrolaAudioLatencySensor(data, entry),
         VictrolaKnobBrightnessSensor(data, entry),
-        VictrolaLastQuickPlaySensor(data, entry),
-        # Per-source current default output sensors (polled from device)
+        VictrolaPowerStateSensor(data, entry),
+        VictrolaVolumeSensor(data, entry),
+        # Per-source default output sensors
         VictrolaDefaultOutputSensor(data, entry, SOURCE_ROON),
         VictrolaDefaultOutputSensor(data, entry, SOURCE_SONOS),
         VictrolaDefaultOutputSensor(data, entry, SOURCE_UPNP),
@@ -73,7 +76,56 @@ class VictrolaCurrentSourceSensor(VictrolaBaseSensor):
 
     @property
     def extra_state_attributes(self):
-        return {s: self._state_store.source_enabled.get(s) for s in ["Roon","Sonos","UPnP","Bluetooth"]}
+        return {s: self._state_store.source_enabled.get(s)
+                for s in ["Roon", "Sonos", "UPnP", "Bluetooth"]}
+
+
+class VictrolaDefaultSpeakerSensor(VictrolaBaseSensor):
+    """Current default speaker - polled from ui: getRows (device-authoritative name)."""
+    _attr_name = "Default Speaker"
+    _attr_icon = "mdi:speaker-multiple"
+
+    def __init__(self, data, entry):
+        super().__init__(data, entry)
+        self._attr_unique_id = f"{entry.entry_id}_default_speaker"
+
+    @property
+    def native_value(self) -> str:
+        return self._state_store.current_default_speaker_name or "Unknown"
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        return {
+            "source": "ui: getRows row 1 title",
+            "note": "Polled from device - reflects actual device state",
+        }
+
+
+class VictrolaCurrentQuickPlaySensor(VictrolaBaseSensor):
+    """Current quickplay speaker - polled from speakerQuickplay getRows (preferred=True)."""
+    _attr_name = "Current Quick Play"
+    _attr_icon = "mdi:play-circle"
+
+    def __init__(self, data, entry):
+        super().__init__(data, entry)
+        self._attr_unique_id = f"{entry.entry_id}_current_quickplay"
+
+    @property
+    def native_value(self) -> str:
+        return self._state_store.quickplay_speaker or "None"
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        speakers = [
+            {"name": s.get("name"), "id": s.get("id"), "preferred": s.get("preferred", False)}
+            for s in self._state_store.available_quickplay_speakers
+        ]
+        return {
+            "speaker_id": self._state_store.quickplay_speaker_id,
+            "source": "speakerQuickplay getRows preferred=True",
+            "note": "Polled from device - reflects actual device state",
+            "available_speakers": speakers,
+        }
 
 
 class VictrolaAudioQualitySensor(VictrolaBaseSensor):
@@ -117,30 +169,44 @@ class VictrolaKnobBrightnessSensor(VictrolaBaseSensor):
         return self._state_store.knob_brightness
 
 
-class VictrolaLastQuickPlaySensor(VictrolaBaseSensor):
-    """Last speaker sent a QuickPlay command. HA-tracked only - not confirmed by device."""
-    _attr_name = "Last Quick Play"
-    _attr_icon = "mdi:play-circle"
+class VictrolaPowerStateSensor(VictrolaBaseSensor):
+    """Device power state from powermanager:target."""
+    _attr_name = "Power State"
+    _attr_icon = "mdi:power"
 
     def __init__(self, data, entry):
         super().__init__(data, entry)
-        self._attr_unique_id = f"{entry.entry_id}_last_quickplay"
+        self._attr_unique_id = f"{entry.entry_id}_power_state"
 
     @property
-    def native_value(self):
-        return self._state_store.quickplay_speaker or "None"
+    def native_value(self) -> str:
+        return self._state_store.power_target or "Unknown"
 
     @property
-    def extra_state_attributes(self):
+    def extra_state_attributes(self) -> dict:
         return {
-            "source": self._state_store.quickplay_source,
-            "speaker_id": self._state_store.quickplay_speaker_id,
-            "note": "HA-tracked only - device does not expose current quickplay state",
+            "reason": self._state_store.power_reason,
         }
 
 
+class VictrolaVolumeSensor(VictrolaBaseSensor):
+    """Device volume from player:volume."""
+    _attr_name = "Volume"
+    _attr_icon = "mdi:volume-high"
+    _attr_native_unit_of_measurement = "%"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, data, entry):
+        super().__init__(data, entry)
+        self._attr_unique_id = f"{entry.entry_id}_volume"
+
+    @property
+    def native_value(self) -> int | None:
+        return self._state_store.volume
+
+
 class VictrolaDefaultOutputSensor(VictrolaBaseSensor):
-    """Current default output per source - POLLED FROM DEVICE via getRows."""
+    """Current default output per source - from settings:/victrola getRows."""
     _attr_icon = "mdi:speaker-multiple"
 
     def __init__(self, data, entry, source: str):

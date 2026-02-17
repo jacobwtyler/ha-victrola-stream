@@ -237,6 +237,123 @@ class VictrolaAPI:
         return state
 
 
+
+    async def async_get_ui_state(self) -> dict:
+        """Fetch ui: getRows - returns current default speaker name and UI structure.
+        
+        Row 0: header "DEFAULT SPEAKER"
+        Row 1: victrola:ui/speakerSelection - title = current default speaker name
+        Row 2: autoplay setting
+        Row 3: header "QUICKPLAY"
+        Row 4: victrola:ui/speakerQuickplay container
+        """
+        try:
+            from urllib.parse import quote
+            url = f"{self.base_url}/api/getRows?path={quote('ui:')}&roles=%40all&from=0&to=30&type=structure&_nocache={int(__import__('time').time()*1000)}"
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    url,
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as r:
+                    if r.status == 200:
+                        data = await r.json(content_type=None)
+                        rows = data.get("rows", [])
+                        result = {}
+                        for row in rows:
+                            if isinstance(row, dict):
+                                path = row.get("path", "")
+                                title = row.get("title")
+                                if path == "victrola:ui/speakerSelection" and title:
+                                    result["current_default_speaker_name"] = title
+                                    _LOGGER.debug("Current default speaker from ui:: %s", title)
+                                if path == "settings:/victrola/autoplay":
+                                    val = row.get("value", {})
+                                    if val:
+                                        result["autoplay"] = val.get("bool_")
+                        return result
+        except Exception as err:
+            _LOGGER.error("ui: getRows error: %s", err)
+        return {}
+
+    async def async_get_quickplay_state(self) -> dict:
+        """Fetch victrola:ui/speakerQuickplay getRows.
+        
+        Returns list of available speakers with preferred=True on currently quickplayed one.
+        Each row has: type, path, id, title, preferred (bool), value (sonosGroup details)
+        """
+        try:
+            from urllib.parse import quote
+            url = f"{self.base_url}/api/getRows?path={quote('victrola:ui/speakerQuickplay')}&roles=%40all&from=0&to=65535&type=structure&_nocache={int(__import__('time').time()*1000)}"
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    url,
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as r:
+                    if r.status == 200:
+                        data = await r.json(content_type=None)
+                        rows = data.get("rows", [])
+                        result = {
+                            "speakers": [],
+                            "current_quickplay_name": None,
+                            "current_quickplay_id": None,
+                        }
+                        for row in rows:
+                            if not isinstance(row, dict):
+                                continue
+                            speaker = {
+                                "name": row.get("title"),
+                                "id": row.get("id"),
+                                "path": row.get("path"),
+                                "preferred": row.get("preferred", False),
+                                "type": row.get("type"),
+                            }
+                            # Extract sonosGroupId for full group ID
+                            val = row.get("value", {})
+                            if val and val.get("type") == "sonosGroup":
+                                sg = val.get("sonosGroup", {})
+                                speaker["sonos_group_id"] = sg.get("sonosGroupId")
+                                speaker["group_name"] = sg.get("groupName")
+                            result["speakers"].append(speaker)
+                            if row.get("preferred"):
+                                result["current_quickplay_name"] = row.get("title")
+                                result["current_quickplay_id"] = row.get("id")
+                                _LOGGER.debug(
+                                    "Current quickplay speaker: %s (%s)",
+                                    row.get("title"), row.get("id")
+                                )
+                        return result
+        except Exception as err:
+            _LOGGER.error("speakerQuickplay getRows error: %s", err)
+        return {}
+
+    async def async_get_player_state(self) -> dict:
+        """Fetch player volume and power state."""
+        result = {}
+        try:
+            from urllib.parse import quote
+            async with aiohttp.ClientSession() as session:
+                # Volume
+                url = f"{self.base_url}/api/getData?path={quote('player:volume')}&roles=%40all&type=structure&_nocache={int(__import__('time').time()*1000)}"
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as r:
+                    if r.status == 200:
+                        data = await r.json(content_type=None)
+                        val = data.get("value", {})
+                        if val and val.get("type") == "i32_":
+                            result["volume"] = val.get("i32_")
+                # Power state
+                url2 = f"{self.base_url}/api/getData?path={quote('powermanager:target')}&roles=%40all&type=structure&_nocache={int(__import__('time').time()*1000)}"
+                async with session.get(url2, timeout=aiohttp.ClientTimeout(total=5)) as r:
+                    if r.status == 200:
+                        data = await r.json(content_type=None)
+                        val = data.get("value", {})
+                        if val and val.get("type") == "powerTarget":
+                            pt = val.get("powerTarget", {})
+                            result["power_target"] = pt.get("target")
+                            result["power_reason"] = pt.get("reason")
+        except Exception as err:
+            _LOGGER.error("player state error: %s", err)
+        return result
+
     async def async_get_rows(self, path: str, from_idx: int, to_idx: int) -> list:
         """Fetch getRows from device."""
         try:

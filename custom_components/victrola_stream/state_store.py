@@ -1,4 +1,4 @@
-"""Internal state store - settings polled from API, speaker commands tracked separately."""
+"""Internal state store - all values polled from device."""
 from __future__ import annotations
 from .const import AUDIO_QUALITY_OPTIONS, AUDIO_LATENCY_OPTIONS, BRIGHTNESS_MIN, BRIGHTNESS_MAX
 
@@ -6,21 +6,27 @@ from .const import AUDIO_QUALITY_OPTIONS, AUDIO_LATENCY_OPTIONS, BRIGHTNESS_MIN,
 class VictrolaStateStore:
     def __init__(self):
         self.current_source: str = "Roon"
+        self.current_default_speaker_name: str | None = None  # from ui: getRows (authoritative)
 
-        # QuickPlay: last speaker sent via victrola:ui/quickplay (HA-tracked only)
+        # QuickPlay: now POLLED from device via speakerQuickplay getRows (preferred=True)
         self.quickplay_speaker: str | None = None
         self.quickplay_speaker_id: str | None = None
         self.quickplay_source: str | None = None
 
-        # Default Output: current per-source default output (POLLED FROM DEVICE via getRows)
-        # Keyed by source name e.g. {"Roon": {"name": "Airstream HomePods", "id": "..."}}
+        # Available quickplay speakers (full list from speakerQuickplay getRows)
+        self.available_quickplay_speakers: list = []
+
+        # Default Output per source (from settings:/victrola getRows rows 2,3,15)
         self.default_outputs: dict[str, dict] = {}
 
-        # Settings polled from device
+        # Settings
         self.audio_quality: str = "Standard"
         self.audio_latency: str = "Medium"
         self.knob_brightness: int = 100
         self.autoplay: bool = True
+        self.volume: int | None = None
+        self.power_target: str | None = None
+        self.power_reason: str | None = None
 
         self.source_enabled: dict[str, bool] = {
             "Roon": True, "Sonos": True, "UPnP": True, "Bluetooth": True,
@@ -33,7 +39,6 @@ class VictrolaStateStore:
         self.quickplay_speaker_id = speaker_id
 
     def set_default_output(self, source: str, speaker_name: str, speaker_id: str):
-        """Set the current default output for a source (from device poll or user action)."""
         self.default_outputs[source] = {"name": speaker_name, "id": speaker_id}
 
     def get_default_output(self, source: str) -> dict | None:
@@ -56,6 +61,7 @@ class VictrolaStateStore:
     def to_dict(self) -> dict:
         return {
             "current_source": self.current_source,
+            "current_default_speaker_name": self.current_default_speaker_name,
             "quickplay_speaker": self.quickplay_speaker,
             "quickplay_speaker_id": self.quickplay_speaker_id,
             "quickplay_source": self.quickplay_source,
@@ -64,6 +70,9 @@ class VictrolaStateStore:
             "audio_latency": self.audio_latency,
             "knob_brightness": self.knob_brightness,
             "autoplay": self.autoplay,
+            "volume": self.volume,
+            "power_target": self.power_target,
+            "power_reason": self.power_reason,
             "source_enabled": self.source_enabled,
             "connected": self.connected,
         }
