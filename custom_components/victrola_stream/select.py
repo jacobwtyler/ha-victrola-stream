@@ -1,4 +1,4 @@
-"""Select platform - Audio Source, Quality, Latency, QuickPlay and Default Output per source."""
+"""Select platform - unified QuickPlay, Audio settings, Default Output per source."""
 from __future__ import annotations
 import logging
 from homeassistant.components.select import SelectEntity
@@ -12,21 +12,24 @@ from .const import (
     AUDIO_LATENCY_OPTIONS, AUDIO_LATENCY_LABEL_TO_API,
     SOURCE_TO_DEFAULT_TYPE, SOURCE_TO_QUICKPLAY_TYPE,
     SOURCE_ROON, SOURCE_SONOS, SOURCE_UPNP, SOURCE_BLUETOOTH,
+    VICTROLA_TYPE_SONOS_QUICKPLAY,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
+async def async_setup_entry(
+    hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
+) -> None:
     data = hass.data[DOMAIN][entry.entry_id]
     entities = [
         VictrolaAudioSourceSelect(data, entry),
         VictrolaAudioQualitySelect(data, entry),
         VictrolaAudioLatencySelect(data, entry),
+        VictrolaUnifiedQuickPlaySelect(data, entry),  # ONE unified select from live list
     ]
-    # Add QuickPlay + Default Output selects for each source
+    # Default Output selects remain per-source (different semantics)
     for source in [SOURCE_ROON, SOURCE_SONOS, SOURCE_UPNP, SOURCE_BLUETOOTH]:
-        entities.append(VictrolaQuickPlaySelect(data, entry, source))
         entities.append(VictrolaDefaultOutputSelect(data, entry, source))
 
     async_add_entities(entities)
@@ -37,9 +40,9 @@ class VictrolaBaseSelect(CoordinatorEntity, SelectEntity):
 
     def __init__(self, data: dict, entry: ConfigEntry):
         super().__init__(data["coordinator"])
-        self._api = data["api"]
+        self._api        = data["api"]
         self._state_store = data["state_store"]
-        self._discovery = data["discovery"]
+        self._discovery  = data["discovery"]
 
     @property
     def device_info(self):
@@ -47,12 +50,12 @@ class VictrolaBaseSelect(CoordinatorEntity, SelectEntity):
 
 
 class VictrolaAudioSourceSelect(VictrolaBaseSelect):
-    """Active source selector - disables previous, enables new."""
-    _attr_name = "Audio Source"
-    _attr_icon = "mdi:audio-input-stereo-minijack"
+    """Active source selector."""
+    _attr_name    = "Audio Source"
+    _attr_icon    = "mdi:audio-input-stereo-minijack"
     _attr_options = SOURCES
 
-    def __init__(self, data: dict, entry: ConfigEntry):
+    def __init__(self, data, entry):
         super().__init__(data, entry)
         self._attr_unique_id = f"{entry.entry_id}_audio_source"
 
@@ -73,12 +76,11 @@ class VictrolaAudioSourceSelect(VictrolaBaseSelect):
 
 
 class VictrolaAudioQualitySelect(VictrolaBaseSelect):
-    """Audio quality selector."""
-    _attr_name = "Audio Quality"
-    _attr_icon = "mdi:music-note"
+    _attr_name    = "Audio Quality"
+    _attr_icon    = "mdi:music-note"
     _attr_options = AUDIO_QUALITY_OPTIONS
 
-    def __init__(self, data: dict, entry: ConfigEntry):
+    def __init__(self, data, entry):
         super().__init__(data, entry)
         self._attr_unique_id = f"{entry.entry_id}_audio_quality"
 
@@ -94,12 +96,11 @@ class VictrolaAudioQualitySelect(VictrolaBaseSelect):
 
 
 class VictrolaAudioLatencySelect(VictrolaBaseSelect):
-    """Audio latency selector."""
-    _attr_name = "Audio Latency"
-    _attr_icon = "mdi:timer-outline"
+    _attr_name    = "Audio Latency"
+    _attr_icon    = "mdi:timer-outline"
     _attr_options = AUDIO_LATENCY_OPTIONS
 
-    def __init__(self, data: dict, entry: ConfigEntry):
+    def __init__(self, data, entry):
         super().__init__(data, entry)
         self._attr_unique_id = f"{entry.entry_id}_audio_latency"
 
@@ -114,49 +115,52 @@ class VictrolaAudioLatencySelect(VictrolaBaseSelect):
             self.async_write_ha_state()
 
 
-class VictrolaQuickPlaySelect(VictrolaBaseSelect):
-    """QuickPlay speaker selector - immediately starts streaming to selected speaker."""
+class VictrolaUnifiedQuickPlaySelect(VictrolaBaseSelect):
+    """Unified QuickPlay - live speaker list from device, one select for all sources.
+    
+    Speaker list is populated dynamically from victrola:ui/speakerQuickplay.
+    Current selection reflects device state (preferred=True in device response).
+    Selecting a speaker sends victrola:ui/quickplay immediately.
+    """
+    _attr_name = "Quick Play Speaker"
     _attr_icon = "mdi:play-circle"
 
-    def __init__(self, data: dict, entry: ConfigEntry, source: str):
+    def __init__(self, data, entry):
         super().__init__(data, entry)
-        self._source = source
-        self._attr_unique_id = f"{entry.entry_id}_{source.lower()}_quickplay"
-        self._attr_name = f"{source} Quick Play"
+        self._attr_unique_id = f"{entry.entry_id}_unified_quickplay"
 
     @property
     def options(self) -> list[str]:
-        names = self._discovery.get_speaker_names(self._source)
+        names = self._discovery.get_quickplay_speaker_names()
         return names if names else ["None"]
 
     @property
     def current_option(self) -> str | None:
-        if self._state_store.quickplay_source == self._source:
-            return self._state_store.quickplay_speaker
-        return None
+        """Current quickplay speaker - polled from device (preferred=True)."""
+        return self._state_store.quickplay_speaker
 
     async def async_select_option(self, option: str) -> None:
-        """Send quickplay - immediately starts audio on selected speaker."""
-        victrola_id = self._discovery.get_victrola_id(self._source, option)
-        if not victrola_id:
-            _LOGGER.error("No Victrola ID for %s / %s", self._source, option)
+        """Send quickplay to selected speaker - starts audio immediately."""
+        speaker_id = self._discovery.get_quickplay_id(option)
+        if not speaker_id:
+            _LOGGER.error("No ID found for quickplay speaker: %s", option)
             return
-        quickplay_type = SOURCE_TO_QUICKPLAY_TYPE.get(self._source)
-        _LOGGER.info("QuickPlay: %s / %s (%s)", self._source, option, victrola_id)
-        success = await self._api.async_quickplay(quickplay_type, victrola_id)
+
+        _LOGGER.info("QuickPlay → %s (%s)", option, speaker_id)
+        success = await self._api.async_quickplay(VICTROLA_TYPE_SONOS_QUICKPLAY, speaker_id)
         if success:
-            self._state_store.set_quickplay(self._source, option, victrola_id)
+            self._state_store.set_quickplay(SOURCE_SONOS, option, speaker_id)
             self.async_write_ha_state()
             await self.coordinator.async_request_refresh()
         else:
-            _LOGGER.error("QuickPlay failed: %s / %s", self._source, option)
+            _LOGGER.error("QuickPlay failed for: %s", option)
 
 
 class VictrolaDefaultOutputSelect(VictrolaBaseSelect):
-    """Default Output selector - sets where audio goes next time, no immediate playback."""
+    """Default Output per source - sets where audio goes next time, no immediate playback."""
     _attr_icon = "mdi:speaker-multiple"
 
-    def __init__(self, data: dict, entry: ConfigEntry, source: str):
+    def __init__(self, data, entry, source: str):
         super().__init__(data, entry)
         self._source = source
         self._attr_unique_id = f"{entry.entry_id}_{source.lower()}_default_output"
@@ -169,22 +173,19 @@ class VictrolaDefaultOutputSelect(VictrolaBaseSelect):
 
     @property
     def current_option(self) -> str | None:
-        """Returns current default output from device poll."""
+        """Current default output - polled from device via getRows."""
         info = self._state_store.get_default_output(self._source)
         return info["name"] if info else None
 
     async def async_select_option(self, option: str) -> None:
-        """Send setDefaultOutput - sets next output without starting playback."""
+        """Set default output - no immediate playback."""
         victrola_id = self._discovery.get_victrola_id(self._source, option)
         if not victrola_id:
-            _LOGGER.error("No Victrola ID for %s / %s", self._source, option)
+            _LOGGER.error("No ID for %s / %s", self._source, option)
             return
         default_type = SOURCE_TO_DEFAULT_TYPE.get(self._source)
-        _LOGGER.info("Default Output: %s / %s (%s)", self._source, option, victrola_id)
         success = await self._api.async_set_default_output(default_type, victrola_id)
         if success:
             self._state_store.set_default_output(self._source, option, victrola_id)
             self.async_write_ha_state()
             await self.coordinator.async_request_refresh()
-        else:
-            _LOGGER.error("Default Output failed: %s / %s", self._source, option)

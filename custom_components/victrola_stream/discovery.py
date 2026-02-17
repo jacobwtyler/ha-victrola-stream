@@ -1,236 +1,117 @@
-"""Speaker discovery using HA entity registry + seed mappings."""
+"""Dynamic speaker discovery - populated from device's live speakerQuickplay API."""
 from __future__ import annotations
-
 import logging
-import re
-from typing import Any
-
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import entity_registry as er
-
-from .const import (
-    DEFAULT_ROON_CORE_ID,
-    ROON_SEED_MAPPINGS,
-    SONOS_SEED_MAPPINGS,
-    UPNP_SEED_MAPPINGS,
-    SOURCE_ROON, SOURCE_SONOS, SOURCE_UPNP, SOURCE_BLUETOOTH,
-)
+from .const import SOURCE_SONOS, SOURCE_ROON, SOURCE_UPNP, SOURCE_BLUETOOTH, DEFAULT_ROON_CORE_ID
 
 _LOGGER = logging.getLogger(__name__)
 
 
 class VictrolaDiscovery:
-    """Discovers speakers from HA integrations."""
+    """Manages live speaker list fetched from victrola:ui/speakerQuickplay.
 
-    def __init__(self, hass: HomeAssistant):
-        self.hass = hass
-        self.speakers: dict[str, dict] = {
-            SOURCE_ROON: {},
-            SOURCE_SONOS: {},
-            SOURCE_UPNP: {},
+    Speaker data is populated on startup and refreshed each coordinator cycle.
+    Each speaker entry: {name -> {victrola_id, path, type, sonos_group_id, source}}
+    """
+
+    def __init__(self, hass: HomeAssistant) -> None:
+        self._hass = hass
+        # Live speakers from speakerQuickplay (Sonos-based, from device)
+        self._quickplay_speakers: dict[str, dict] = {}
+        # Roon/UPnP/Bluetooth from settings:/victrola getRows
+        self._default_output_speakers: dict[str, dict[str, dict]] = {
+            SOURCE_ROON:      {},
+            SOURCE_SONOS:     {},
+            SOURCE_UPNP:      {},
             SOURCE_BLUETOOTH: {},
         }
-        self.roon_core_id = DEFAULT_ROON_CORE_ID
 
-    async def async_discover_all(self) -> dict:
-        await self.async_discover_roon()
-        await self.async_discover_sonos()
-        await self.async_discover_upnp()
-        await self.async_discover_bluetooth()
-        return self.speakers
+    def update_from_quickplay(self, speakers: list[dict]) -> None:
+        """Update speaker list from speakerQuickplay getRows response."""
+        self._quickplay_speakers = {}
+        self._default_output_speakers[SOURCE_SONOS] = {}
 
-    async def async_discover_roon(self):
-        """Discover Roon speakers - merge HA entities with seed mappings."""
-        entity_reg = er.async_get(self.hass)
-        seen = set()
-
-        for entity in entity_reg.entities.values():
-            if entity.platform != "roon":
-                continue
-            if not entity.entity_id.startswith("media_player."):
-                continue
-            if not entity.unique_id or not entity.unique_id.startswith("roon_"):
+        for spk in speakers:
+            name  = spk.get("name") or spk.get("title")
+            spk_id = spk.get("id")
+            if not name or not spk_id:
                 continue
 
-            parts = entity.unique_id.split("_", 2)
-            if len(parts) < 3:
-                continue
-
-            speaker_name = parts[2]
-            if speaker_name in seen:
-                continue
-            seen.add(speaker_name)
-
-            # Try seed mapping (has full suffix IDs)
-            output_id = self._fuzzy_match(speaker_name, ROON_SEED_MAPPINGS)
-            victrola_id = f"{self.roon_core_id}:{output_id}" if output_id else None
-
-            self.speakers[SOURCE_ROON][speaker_name] = {
-                "name": speaker_name,
-                "entity_id": entity.entity_id,
-                "victrola_id": victrola_id,
-                "mapped": victrola_id is not None,
+            entry = {
+                "victrola_id":    spk_id,
+                "path":           spk.get("path"),
+                "type":           spk.get("type", "victrolaQuickplaySonos"),
+                "sonos_group_id": spk.get("sonos_group_id"),
+                "source":         SOURCE_SONOS,
+                "preferred":      spk.get("preferred", False),
             }
+            self._quickplay_speakers[name] = entry
+            self._default_output_speakers[SOURCE_SONOS][name] = entry
 
-        # Add any seed speakers not found in HA
-        for name, output_id in ROON_SEED_MAPPINGS.items():
-            if name not in self.speakers[SOURCE_ROON]:
-                self.speakers[SOURCE_ROON][name] = {
-                    "name": name,
-                    "entity_id": None,
-                    "victrola_id": f"{self.roon_core_id}:{output_id}",
-                    "mapped": True,
-                }
+        _LOGGER.debug(
+            "Discovery updated: %d quickplay speakers: %s",
+            len(self._quickplay_speakers),
+            list(self._quickplay_speakers.keys()),
+        )
 
-        mapped = sum(1 for s in self.speakers[SOURCE_ROON].values() if s["mapped"])
-        _LOGGER.info("Roon: %d speakers (%d mapped)", len(self.speakers[SOURCE_ROON]), mapped)
+    def update_roon_speaker(self, name: str, victrola_id: str) -> None:
+        """Register a Roon speaker by its full output ID."""
+        self._default_output_speakers[SOURCE_ROON][name] = {
+            "victrola_id": victrola_id,
+            "source": SOURCE_ROON,
+        }
 
-    async def async_discover_sonos(self):
-        """Discover Sonos speakers."""
-        entity_reg = er.async_get(self.hass)
-        seen_rincons = set()
+    def update_upnp_speaker(self, name: str, victrola_id: str) -> None:
+        """Register a UPnP speaker by its UUID."""
+        self._default_output_speakers[SOURCE_UPNP][name] = {
+            "victrola_id": victrola_id,
+            "source": SOURCE_UPNP,
+        }
 
-        for entity in entity_reg.entities.values():
-            if entity.platform != "sonos":
-                continue
-            if not entity.entity_id.startswith("media_player."):
-                continue
-            if not entity.unique_id:
-                continue
+    def update_bluetooth_speaker(self, name: str, victrola_id: str) -> None:
+        """Register a Bluetooth speaker."""
+        self._default_output_speakers[SOURCE_BLUETOOTH][name] = {
+            "victrola_id": victrola_id,
+            "source": SOURCE_BLUETOOTH,
+        }
 
-            m = re.search(r"RINCON_[A-F0-9]+", entity.unique_id, re.IGNORECASE)
-            if not m:
-                continue
+    # ── Public accessors ─────────────────────────────────────────────────
 
-            rincon = m.group(0).upper()
-            if rincon in seen_rincons:
-                continue
-            seen_rincons.add(rincon)
+    def get_quickplay_speakers(self) -> dict[str, dict]:
+        """Return all speakers available for quickplay (live from device)."""
+        return self._quickplay_speakers
 
-            speaker_name = entity.original_name or entity.name or rincon
-            # Try to match to seed for clean names
-            seed_name = self._fuzzy_match_reverse(rincon, SONOS_SEED_MAPPINGS)
+    def get_quickplay_speaker_names(self) -> list[str]:
+        """Return sorted list of quickplay speaker names."""
+        return sorted(self._quickplay_speakers.keys())
 
-            display_name = seed_name or speaker_name
-
-            self.speakers[SOURCE_SONOS][display_name] = {
-                "name": display_name,
-                "entity_id": entity.entity_id,
-                "victrola_id": rincon,
-                "mapped": True,
-            }
-
-        # Add any seed speakers not in HA
-        for name, rincon in SONOS_SEED_MAPPINGS.items():
-            if name not in self.speakers[SOURCE_SONOS]:
-                self.speakers[SOURCE_SONOS][name] = {
-                    "name": name,
-                    "entity_id": None,
-                    "victrola_id": rincon,
-                    "mapped": True,
-                }
-
-        _LOGGER.info("Sonos: %d speakers", len(self.speakers[SOURCE_SONOS]))
-
-    async def async_discover_upnp(self):
-        """Discover UPnP/DLNA devices."""
-        entity_reg = er.async_get(self.hass)
-
-        for entity in entity_reg.entities.values():
-            if entity.platform not in ["dlna_dmr", "upnp"]:
-                continue
-            if not entity.entity_id.startswith("media_player."):
-                continue
-
-            upnp_uuid = None
-            if entity.unique_id and entity.unique_id.startswith("uuid:"):
-                upnp_uuid = entity.unique_id
-            elif entity.unique_id:
-                m = re.search(r"uuid:[a-fA-F0-9\-]+", entity.unique_id)
-                if m:
-                    upnp_uuid = m.group(0)
-
-            if not upnp_uuid:
-                continue
-
-            speaker_name = entity.original_name or entity.name or upnp_uuid
-            seed_name = self._fuzzy_match_reverse(upnp_uuid, UPNP_SEED_MAPPINGS)
-            display_name = seed_name or speaker_name
-
-            self.speakers[SOURCE_UPNP][display_name] = {
-                "name": display_name,
-                "entity_id": entity.entity_id,
-                "victrola_id": upnp_uuid,
-                "mapped": True,
-            }
-
-        # Add seeds not in HA
-        for name, uuid in UPNP_SEED_MAPPINGS.items():
-            if name not in self.speakers[SOURCE_UPNP]:
-                self.speakers[SOURCE_UPNP][name] = {
-                    "name": name,
-                    "entity_id": None,
-                    "victrola_id": uuid,
-                    "mapped": True,
-                }
-
-        _LOGGER.info("UPnP: %d devices", len(self.speakers[SOURCE_UPNP]))
-
-    async def async_discover_bluetooth(self):
-        """Discover Bluetooth devices."""
-        entity_reg = er.async_get(self.hass)
-
-        for entity in entity_reg.entities.values():
-            if not entity.platform or "bluetooth" not in entity.platform.lower():
-                continue
-            if not entity.entity_id.startswith("media_player."):
-                continue
-
-            speaker_name = entity.original_name or entity.name or "Unknown"
-            m = re.search(
-                r"[0-9A-F]{2}:[0-9A-F]{2}:[0-9A-F]{2}:[0-9A-F]{2}:[0-9A-F]{2}:[0-9A-F]{2}",
-                entity.unique_id or "", re.IGNORECASE,
-            )
-            bt_id = m.group(0).upper() if m else (entity.unique_id or "unknown")
-
-            self.speakers[SOURCE_BLUETOOTH][speaker_name] = {
-                "name": speaker_name,
-                "entity_id": entity.entity_id,
-                "victrola_id": bt_id,
-                "mapped": True,
-            }
-
-        _LOGGER.info("Bluetooth: %d devices", len(self.speakers[SOURCE_BLUETOOTH]))
-
-    # ─────────────────────────────────────────────
-    # Helpers
-    # ─────────────────────────────────────────────
-
-    def _normalize(self, s: str) -> str:
-        return s.lower().replace(" ", "").replace("-", "").replace("_", "")
-
-    def _fuzzy_match(self, name: str, mapping: dict) -> str | None:
-        """Match name to a key in mapping, return value."""
-        n = self._normalize(name)
-        for k, v in mapping.items():
-            if n == self._normalize(k) or n in self._normalize(k) or self._normalize(k) in n:
-                return v
-        return None
-
-    def _fuzzy_match_reverse(self, value: str, mapping: dict) -> str | None:
-        """Match a value in mapping, return key (name)."""
-        v = self._normalize(value)
-        for k, mv in mapping.items():
-            if v == self._normalize(mv):
-                return k
-        return None
-
-    def get_speakers(self, source: str) -> dict:
-        return self.speakers.get(source, {})
+    def get_speakers(self, source: str) -> dict[str, dict]:
+        """Return speakers for a specific source (for Default Output selects)."""
+        return self._default_output_speakers.get(source, {})
 
     def get_speaker_names(self, source: str) -> list[str]:
-        return list(self.speakers.get(source, {}).keys())
+        """Return sorted speaker names for a source."""
+        return sorted(self._default_output_speakers.get(source, {}).keys())
 
-    def get_victrola_id(self, source: str, speaker_name: str) -> str | None:
-        s = self.speakers.get(source, {}).get(speaker_name)
-        return s["victrola_id"] if s else None
+    def get_victrola_id(self, source: str, name: str) -> str | None:
+        """Get Victrola ID for a speaker by source + name."""
+        speakers = self._default_output_speakers.get(source, {})
+        entry = speakers.get(name)
+        return entry.get("victrola_id") if entry else None
+
+    def get_quickplay_id(self, name: str) -> str | None:
+        """Get Victrola ID for a quickplay speaker by name."""
+        entry = self._quickplay_speakers.get(name)
+        return entry.get("victrola_id") if entry else None
+
+    def find_speaker_name_by_id(self, victrola_id: str) -> str | None:
+        """Reverse lookup: find any speaker name from its ID across all sources."""
+        for source_dict in self._default_output_speakers.values():
+            for name, info in source_dict.items():
+                if info.get("victrola_id") == victrola_id:
+                    return name
+        return None
+
+    async def async_discover_all(self) -> None:
+        """Called on startup - actual population happens via coordinator first refresh."""
+        _LOGGER.debug("Discovery initialized - speakers will populate on first coordinator refresh")

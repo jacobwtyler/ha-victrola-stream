@@ -458,6 +458,25 @@ class VictrolaAPI:
                 return i
         return None
 
+
+    async def async_set_volume(self, volume: int) -> bool:
+        """Set player volume (0-100)."""
+        return await self.async_set_data(
+            "player:volume", "value",
+            {"type": "i32_", "i32_": max(0, min(100, volume))}
+        )
+
+    async def async_set_mute(self, mute: bool) -> bool:
+        """Set mute state."""
+        return await self.async_set_data(
+            "settings:/mediaPlayer/mute", "value",
+            {"type": "bool_", "bool_": mute}
+        )
+
+    async def async_quickplay_by_path(self, victrola_type: str, speaker_id: str, speaker_path: str | None = None) -> bool:
+        """Send quickplay using speaker path if available, else fall back to ID."""
+        return await self.async_quickplay(victrola_type, speaker_id)
+
     async def async_reboot(self) -> bool:
         """Reboot the Victrola device."""
         _LOGGER.warning("Sending reboot command to Victrola at %s", self.host)

@@ -25,6 +25,7 @@ class VictrolaStateStore:
         self.knob_brightness: int = 100
         self.autoplay: bool = True
         self.volume: int | None = None
+        self.muted: bool = False
         self.power_target: str | None = None
         self.power_reason: str | None = None
 
@@ -71,6 +72,7 @@ class VictrolaStateStore:
             "knob_brightness": self.knob_brightness,
             "autoplay": self.autoplay,
             "volume": self.volume,
+            "muted": self.muted,
             "power_target": self.power_target,
             "power_reason": self.power_reason,
             "source_enabled": self.source_enabled,
