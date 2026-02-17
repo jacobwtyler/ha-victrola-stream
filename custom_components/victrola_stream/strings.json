@@ -3,16 +3,16 @@
     "step": {
       "user": {
         "title": "Set up Victrola Stream",
-        "description": "Enter the IP address of your Victrola Stream turntable.",
+        "description": "Enter the IP address of your Victrola Stream turntable. Make sure your Home Assistant can reach the device on port 80.",
         "data": {
           "victrola_ip": "IP Address",
-          "victrola_port": "Port",
+          "victrola_port": "Port (default: 80)",
           "device_name": "Device Name"
         }
       }
     },
     "error": {
-      "cannot_connect": "Failed to connect to Victrola Stream. Check the IP address and ensure the device is powered on."
+      "cannot_connect": "Failed to connect to Victrola Stream. Check the IP address and ensure the device is powered on and reachable."
     },
     "abort": {
       "already_configured": "This Victrola Stream device is already configured."

@@ -18,6 +18,12 @@ SOURCE_UPNP = "upnp"
 SOURCE_BLUETOOTH = "bluetooth"
 
 SOURCES = [SOURCE_ROON, SOURCE_SONOS, SOURCE_UPNP, SOURCE_BLUETOOTH]
+SOURCE_LABELS = {
+    SOURCE_ROON: "Roon",
+    SOURCE_SONOS: "Sonos",
+    SOURCE_UPNP: "UPnP",
+    SOURCE_BLUETOOTH: "Bluetooth",
+}
 
 # Victrola API paths
 API_SET_DATA = "/api/setData"
@@ -49,3 +55,53 @@ ROON_SEED_MAPPINGS = {
     "Record Player": "1601cbe821d5b0c43381aae694719ab1",
     "All Speakers (Grouped)": "1601f497a849e30de949aa50e04c91af",
 }
+
+# ─────────────────────────────────────────────
+# Victrola API Settings Paths
+# ─────────────────────────────────────────────
+
+# Current output/source
+PATH_CURRENT_OUTPUT     = "settings:/multiroom/current_output"
+PATH_DEFAULT_OUTPUT     = "victrola:ui/setDefaultOutput"
+PATH_QUICKPLAY          = "victrola:ui/quickplay"
+
+# Audio settings
+PATH_AUDIO_QUALITY      = "settings:/multiroom/audio_quality"
+PATH_AUDIO_LATENCY      = "settings:/multiroom/audio_latency"
+
+# UI / hardware
+PATH_KNOB_BRIGHTNESS    = "settings:/ui/knob_brightness"
+
+# Source toggles
+PATH_ROON_ENABLED       = "settings:/multiroom/client_roon/enabled"
+PATH_SONOS_ENABLED      = "settings:/multiroom/client_sonos/enabled"
+PATH_UPNP_ENABLED       = "settings:/multiroom/client_upnp/enabled"
+PATH_BLUETOOTH_ENABLED  = "settings:/multiroom/client_bluetooth/enabled"
+
+# System
+PATH_SYSTEM_REBOOT      = "settings:/system/reboot"
+
+# ─────────────────────────────────────────────
+# Audio Quality Options
+# ─────────────────────────────────────────────
+AUDIO_QUALITY_CD        = "cd"
+AUDIO_QUALITY_HIGH      = "high"
+AUDIO_QUALITY_MEDIUM    = "medium"
+AUDIO_QUALITY_LOW       = "low"
+
+AUDIO_QUALITY_OPTIONS = [
+    AUDIO_QUALITY_CD,
+    AUDIO_QUALITY_HIGH,
+    AUDIO_QUALITY_MEDIUM,
+    AUDIO_QUALITY_LOW,
+]
+
+# Audio Latency Range (ms)
+LATENCY_MIN  = 0
+LATENCY_MAX  = 500
+LATENCY_STEP = 10
+
+# Knob Brightness Range (%)
+BRIGHTNESS_MIN  = 0
+BRIGHTNESS_MAX  = 100
+BRIGHTNESS_STEP = 5
