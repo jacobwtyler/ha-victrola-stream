@@ -169,9 +169,9 @@ class VictrolaDefaultOutputSelect(VictrolaBaseSelect):
 
     @property
     def current_option(self) -> str | None:
-        if self._state_store.default_source == self._source:
-            return self._state_store.default_speaker
-        return None
+        """Returns current default output from device poll."""
+        info = self._state_store.get_default_output(self._source)
+        return info["name"] if info else None
 
     async def async_select_option(self, option: str) -> None:
         """Send setDefaultOutput - sets next output without starting playback."""

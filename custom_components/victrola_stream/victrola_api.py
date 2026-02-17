@@ -236,6 +236,111 @@ class VictrolaAPI:
 
         return state
 
+
+    async def async_get_rows(self, path: str, from_idx: int, to_idx: int) -> list:
+        """Fetch getRows from device."""
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{self.base_url}/api/getRows",
+                    json={"path": path, "roles": ["value"], "from": from_idx, "to": to_idx},
+                    headers={"Content-Type": "application/json"},
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as r:
+                    if r.status == 200:
+                        data = await r.json(content_type=None)
+                        return data.get("rows", [])
+        except Exception as err:
+            _LOGGER.error("getRows %s error: %s", path, err)
+        return []
+
+    async def async_get_current_default_outputs(self) -> dict:
+        """Read current default output IDs from settings:/victrola getRows.
+        
+        Row mapping (discovered via firmware analysis):
+          Row  1: roonEnabled (bool)
+          Row  2: current Sonos default output ID (string)
+          Row  3: current Roon default output ID (string)
+          Row  4: sonosEnabled (bool)
+          Row  5: upnpEnabled (bool)
+          Row  6: bluetoothEnabled (bool)
+          Row  7: audio quality (forceLowBitrate)
+          Row 10: knob brightness (i32_)
+          Row 11: autoplay (bool)
+          Row 12: bluetooth default output path ref (string - e.g. "settings:/victrola/bluetoothEnabled")
+          Row 13: unknown bool
+          Row 14: unknown bool
+          Row 15: current UPnP default output ID (string)
+          Row 18: audio latency (adchlsLatency)
+          
+          speakerSelection getRows:
+          Row  4: currently selected/checked speaker slot (bool true)
+        """
+        rows = await self.async_get_rows("settings:/victrola", 0, 18)
+        result = {}
+
+        def _str_val(row):
+            if row and row[0] and row[0].get("type") == "string_":
+                return row[0].get("string_")
+            return None
+
+        def _bool_val(row):
+            if row and row[0] and row[0].get("type") == "bool_":
+                return row[0].get("bool_")
+            return None
+
+        def _typed_val(row, key):
+            if row and row[0] and key in row[0]:
+                return row[0].get(key)
+            return None
+
+        if len(rows) > 2:
+            result["sonos_default_id"] = _str_val(rows[2])
+        if len(rows) > 3:
+            result["roon_default_id"] = _str_val(rows[3])
+        if len(rows) > 15:
+            result["upnp_default_id"] = _str_val(rows[15])
+        # Row 12: bluetooth default - stored as path string, resolve it
+        if len(rows) > 12:
+            bt_path = _str_val(rows[12])
+            if bt_path and bt_path != "settings:/victrola/bluetoothEnabled":
+                # When a BT device is selected, row 12 contains its ID
+                result["bluetooth_default_id"] = bt_path
+            elif bt_path == "settings:/victrola/bluetoothEnabled":
+                # This is the default/unset state for bluetooth
+                result["bluetooth_default_id"] = None
+        # Also re-read settings from rows for cross-validation
+        if len(rows) > 1:
+            result["roon_enabled"] = _bool_val(rows[1])
+        if len(rows) > 4:
+            result["sonos_enabled"] = _bool_val(rows[4])
+        if len(rows) > 5:
+            result["upnp_enabled"] = _bool_val(rows[5])
+        if len(rows) > 6:
+            result["bluetooth_enabled"] = _bool_val(rows[6])
+        if len(rows) > 7:
+            result["audio_quality_api"] = _typed_val(rows[7], "forceLowBitrate")
+        if len(rows) > 10:
+            if rows[10] and rows[10][0]:
+                result["knob_brightness"] = rows[10][0].get("i32_")
+        if len(rows) > 11:
+            result["autoplay"] = _bool_val(rows[11])
+        if len(rows) > 18:
+            result["audio_latency_api"] = _typed_val(rows[18], "adchlsLatency")
+
+        _LOGGER.debug("Current default outputs: %s", result)
+        return result
+
+    async def async_get_selected_speaker_slot(self) -> int | None:
+        """Read victrola:ui/speakerSelection to find which slot is currently selected (True).
+        Returns the row index of the selected speaker, or None."""
+        rows = await self.async_get_rows("victrola:ui/speakerSelection", 0, 20)
+        for i, row in enumerate(rows):
+            if row and row[0] and row[0].get("type") == "bool_" and row[0].get("bool_") is True:
+                _LOGGER.debug("Selected speaker slot: %d", i)
+                return i
+        return None
+
     async def async_reboot(self) -> bool:
         """Reboot the Victrola device."""
         _LOGGER.warning("Sending reboot command to Victrola at %s", self.host)

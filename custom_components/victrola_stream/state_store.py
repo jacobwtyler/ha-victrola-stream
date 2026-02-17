@@ -1,24 +1,20 @@
-"""Internal state store - tracks last-sent commands and polled settings."""
+"""Internal state store - settings polled from API, speaker commands tracked separately."""
 from __future__ import annotations
-
 from .const import AUDIO_QUALITY_OPTIONS, AUDIO_LATENCY_OPTIONS, BRIGHTNESS_MIN, BRIGHTNESS_MAX
 
 
 class VictrolaStateStore:
-    """Tracks Victrola state - settings polled from API, speaker state from last command."""
-
     def __init__(self):
         self.current_source: str = "Roon"
 
-        # Last quickplay speaker
+        # QuickPlay: last speaker sent via victrola:ui/quickplay (HA-tracked only)
         self.quickplay_speaker: str | None = None
         self.quickplay_speaker_id: str | None = None
         self.quickplay_source: str | None = None
 
-        # Last default output speaker
-        self.default_speaker: str | None = None
-        self.default_speaker_id: str | None = None
-        self.default_source: str | None = None
+        # Default Output: current per-source default output (POLLED FROM DEVICE via getRows)
+        # Keyed by source name e.g. {"Roon": {"name": "Airstream HomePods", "id": "..."}}
+        self.default_outputs: dict[str, dict] = {}
 
         # Settings polled from device
         self.audio_quality: str = "Standard"
@@ -37,9 +33,11 @@ class VictrolaStateStore:
         self.quickplay_speaker_id = speaker_id
 
     def set_default_output(self, source: str, speaker_name: str, speaker_id: str):
-        self.default_source = source
-        self.default_speaker = speaker_name
-        self.default_speaker_id = speaker_id
+        """Set the current default output for a source (from device poll or user action)."""
+        self.default_outputs[source] = {"name": speaker_name, "id": speaker_id}
+
+    def get_default_output(self, source: str) -> dict | None:
+        return self.default_outputs.get(source)
 
     def set_audio_quality(self, label: str):
         if label in AUDIO_QUALITY_OPTIONS:
@@ -61,9 +59,7 @@ class VictrolaStateStore:
             "quickplay_speaker": self.quickplay_speaker,
             "quickplay_speaker_id": self.quickplay_speaker_id,
             "quickplay_source": self.quickplay_source,
-            "default_speaker": self.default_speaker,
-            "default_speaker_id": self.default_speaker_id,
-            "default_source": self.default_source,
+            "default_outputs": self.default_outputs,
             "audio_quality": self.audio_quality,
             "audio_latency": self.audio_latency,
             "knob_brightness": self.knob_brightness,

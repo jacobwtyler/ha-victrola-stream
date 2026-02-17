@@ -44,7 +44,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     discovery = VictrolaDiscovery(hass)
     await discovery.async_discover_all()
 
-    coordinator = VictrolaCoordinator(hass, api, state_store)
+    coordinator = VictrolaCoordinator(hass, api, state_store, discovery)
     await coordinator.async_config_entry_first_refresh()
 
     hass.data[DOMAIN][entry.entry_id] = {
