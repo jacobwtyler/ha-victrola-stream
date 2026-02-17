@@ -1,4 +1,4 @@
-"""Speaker discovery for all Victrola source types."""
+"""Speaker discovery using HA entity registry + seed mappings."""
 from __future__ import annotations
 
 import logging
@@ -11,21 +11,19 @@ from homeassistant.helpers import entity_registry as er
 from .const import (
     DEFAULT_ROON_CORE_ID,
     ROON_SEED_MAPPINGS,
-    SOURCE_ROON,
-    SOURCE_SONOS,
-    SOURCE_UPNP,
-    SOURCE_BLUETOOTH,
+    SONOS_SEED_MAPPINGS,
+    UPNP_SEED_MAPPINGS,
+    SOURCE_ROON, SOURCE_SONOS, SOURCE_UPNP, SOURCE_BLUETOOTH,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
 
 class VictrolaDiscovery:
-    """Discover speakers from Home Assistant integrations."""
+    """Discovers speakers from HA integrations."""
 
-    def __init__(self, hass: HomeAssistant, api: Any):
+    def __init__(self, hass: HomeAssistant):
         self.hass = hass
-        self.api = api
         self.speakers: dict[str, dict] = {
             SOURCE_ROON: {},
             SOURCE_SONOS: {},
@@ -34,20 +32,15 @@ class VictrolaDiscovery:
         }
         self.roon_core_id = DEFAULT_ROON_CORE_ID
 
-    async def async_discover_all_sources(self) -> dict:
-        """Discover all source types."""
+    async def async_discover_all(self) -> dict:
         await self.async_discover_roon()
         await self.async_discover_sonos()
         await self.async_discover_upnp()
         await self.async_discover_bluetooth()
         return self.speakers
 
-    # ─────────────────────────────────────────────
-    # Roon
-    # ─────────────────────────────────────────────
-
     async def async_discover_roon(self):
-        """Discover Roon speakers from HA Roon integration."""
+        """Discover Roon speakers - merge HA entities with seed mappings."""
         entity_reg = er.async_get(self.hass)
         seen = set()
 
@@ -68,27 +61,34 @@ class VictrolaDiscovery:
                 continue
             seen.add(speaker_name)
 
+            # Try seed mapping (has full suffix IDs)
             output_id = self._fuzzy_match(speaker_name, ROON_SEED_MAPPINGS)
+            victrola_id = f"{self.roon_core_id}:{output_id}" if output_id else None
 
             self.speakers[SOURCE_ROON][speaker_name] = {
                 "name": speaker_name,
                 "entity_id": entity.entity_id,
-                "output_id": output_id,
-                "victrola_id": f"{self.roon_core_id}:{output_id}" if output_id else None,
-                "mapped": output_id is not None,
+                "victrola_id": victrola_id,
+                "mapped": victrola_id is not None,
             }
 
-        mapped = sum(1 for s in self.speakers[SOURCE_ROON].values() if s["mapped"])
-        _LOGGER.info("Roon: %d speakers discovered (%d mapped)", len(self.speakers[SOURCE_ROON]), mapped)
+        # Add any seed speakers not found in HA
+        for name, output_id in ROON_SEED_MAPPINGS.items():
+            if name not in self.speakers[SOURCE_ROON]:
+                self.speakers[SOURCE_ROON][name] = {
+                    "name": name,
+                    "entity_id": None,
+                    "victrola_id": f"{self.roon_core_id}:{output_id}",
+                    "mapped": True,
+                }
 
-    # ─────────────────────────────────────────────
-    # Sonos
-    # ─────────────────────────────────────────────
+        mapped = sum(1 for s in self.speakers[SOURCE_ROON].values() if s["mapped"])
+        _LOGGER.info("Roon: %d speakers (%d mapped)", len(self.speakers[SOURCE_ROON]), mapped)
 
     async def async_discover_sonos(self):
-        """Discover Sonos speakers from HA Sonos integration."""
+        """Discover Sonos speakers."""
         entity_reg = er.async_get(self.hass)
-        sonos_by_rincon: dict[str, dict] = {}
+        seen_rincons = set()
 
         for entity in entity_reg.entities.values():
             if entity.platform != "sonos":
@@ -98,36 +98,42 @@ class VictrolaDiscovery:
             if not entity.unique_id:
                 continue
 
-            rincon_match = re.search(r"RINCON_[A-F0-9]+", entity.unique_id, re.IGNORECASE)
-            if not rincon_match:
+            m = re.search(r"RINCON_[A-F0-9]+", entity.unique_id, re.IGNORECASE)
+            if not m:
                 continue
 
-            rincon_id = rincon_match.group(0).upper()
-            if rincon_id in sonos_by_rincon:
+            rincon = m.group(0).upper()
+            if rincon in seen_rincons:
                 continue
+            seen_rincons.add(rincon)
 
-            speaker_name = entity.original_name or entity.name or rincon_id
+            speaker_name = entity.original_name or entity.name or rincon
+            # Try to match to seed for clean names
+            seed_name = self._fuzzy_match_reverse(rincon, SONOS_SEED_MAPPINGS)
 
-            sonos_by_rincon[rincon_id] = {
-                "name": speaker_name,
+            display_name = seed_name or speaker_name
+
+            self.speakers[SOURCE_SONOS][display_name] = {
+                "name": display_name,
                 "entity_id": entity.entity_id,
-                "rincon_id": rincon_id,
-                "victrola_id": rincon_id,
+                "victrola_id": rincon,
                 "mapped": True,
             }
 
-        # Key by speaker name for easier lookup
-        for info in sonos_by_rincon.values():
-            self.speakers[SOURCE_SONOS][info["name"]] = info
+        # Add any seed speakers not in HA
+        for name, rincon in SONOS_SEED_MAPPINGS.items():
+            if name not in self.speakers[SOURCE_SONOS]:
+                self.speakers[SOURCE_SONOS][name] = {
+                    "name": name,
+                    "entity_id": None,
+                    "victrola_id": rincon,
+                    "mapped": True,
+                }
 
-        _LOGGER.info("Sonos: %d speakers discovered", len(self.speakers[SOURCE_SONOS]))
-
-    # ─────────────────────────────────────────────
-    # UPnP / DLNA
-    # ─────────────────────────────────────────────
+        _LOGGER.info("Sonos: %d speakers", len(self.speakers[SOURCE_SONOS]))
 
     async def async_discover_upnp(self):
-        """Discover UPnP/DLNA devices from HA DLNA integration."""
+        """Discover UPnP/DLNA devices."""
         entity_reg = er.async_get(self.hass)
 
         for entity in entity_reg.entities.values():
@@ -135,38 +141,43 @@ class VictrolaDiscovery:
                 continue
             if not entity.entity_id.startswith("media_player."):
                 continue
-            if not entity.unique_id:
-                continue
 
             upnp_uuid = None
-            if entity.unique_id.startswith("uuid:"):
+            if entity.unique_id and entity.unique_id.startswith("uuid:"):
                 upnp_uuid = entity.unique_id
-            else:
-                match = re.search(r"uuid:[a-fA-F0-9\-]+", entity.unique_id)
-                if match:
-                    upnp_uuid = match.group(0)
+            elif entity.unique_id:
+                m = re.search(r"uuid:[a-fA-F0-9\-]+", entity.unique_id)
+                if m:
+                    upnp_uuid = m.group(0)
 
             if not upnp_uuid:
                 continue
 
             speaker_name = entity.original_name or entity.name or upnp_uuid
+            seed_name = self._fuzzy_match_reverse(upnp_uuid, UPNP_SEED_MAPPINGS)
+            display_name = seed_name or speaker_name
 
-            self.speakers[SOURCE_UPNP][speaker_name] = {
-                "name": speaker_name,
+            self.speakers[SOURCE_UPNP][display_name] = {
+                "name": display_name,
                 "entity_id": entity.entity_id,
-                "upnp_uuid": upnp_uuid,
                 "victrola_id": upnp_uuid,
                 "mapped": True,
             }
 
-        _LOGGER.info("UPnP: %d devices discovered", len(self.speakers[SOURCE_UPNP]))
+        # Add seeds not in HA
+        for name, uuid in UPNP_SEED_MAPPINGS.items():
+            if name not in self.speakers[SOURCE_UPNP]:
+                self.speakers[SOURCE_UPNP][name] = {
+                    "name": name,
+                    "entity_id": None,
+                    "victrola_id": uuid,
+                    "mapped": True,
+                }
 
-    # ─────────────────────────────────────────────
-    # Bluetooth
-    # ─────────────────────────────────────────────
+        _LOGGER.info("UPnP: %d devices", len(self.speakers[SOURCE_UPNP]))
 
     async def async_discover_bluetooth(self):
-        """Discover Bluetooth devices from HA Bluetooth integration."""
+        """Discover Bluetooth devices."""
         entity_reg = er.async_get(self.hass)
 
         for entity in entity_reg.entities.values():
@@ -174,60 +185,52 @@ class VictrolaDiscovery:
                 continue
             if not entity.entity_id.startswith("media_player."):
                 continue
-            if not entity.unique_id:
-                continue
 
             speaker_name = entity.original_name or entity.name or "Unknown"
-
-            mac_match = re.search(
+            m = re.search(
                 r"[0-9A-F]{2}:[0-9A-F]{2}:[0-9A-F]{2}:[0-9A-F]{2}:[0-9A-F]{2}:[0-9A-F]{2}",
-                entity.unique_id,
-                re.IGNORECASE,
+                entity.unique_id or "", re.IGNORECASE,
             )
-            bt_id = mac_match.group(0).upper() if mac_match else entity.unique_id
+            bt_id = m.group(0).upper() if m else (entity.unique_id or "unknown")
 
             self.speakers[SOURCE_BLUETOOTH][speaker_name] = {
                 "name": speaker_name,
                 "entity_id": entity.entity_id,
-                "bluetooth_id": bt_id,
                 "victrola_id": bt_id,
                 "mapped": True,
             }
 
-        _LOGGER.info("Bluetooth: %d devices discovered", len(self.speakers[SOURCE_BLUETOOTH]))
+        _LOGGER.info("Bluetooth: %d devices", len(self.speakers[SOURCE_BLUETOOTH]))
 
     # ─────────────────────────────────────────────
     # Helpers
     # ─────────────────────────────────────────────
 
+    def _normalize(self, s: str) -> str:
+        return s.lower().replace(" ", "").replace("-", "").replace("_", "")
+
     def _fuzzy_match(self, name: str, mapping: dict) -> str | None:
-        """Fuzzy match speaker name to output ID."""
-        n = name.lower().replace(" ", "").replace("-", "").replace("_", "")
-        for mapped_name, output_id in mapping.items():
-            m = mapped_name.lower().replace(" ", "").replace("-", "").replace("_", "")
-            if n == m or n in m or m in n:
-                return output_id
+        """Match name to a key in mapping, return value."""
+        n = self._normalize(name)
+        for k, v in mapping.items():
+            if n == self._normalize(k) or n in self._normalize(k) or self._normalize(k) in n:
+                return v
         return None
 
-    def get_speakers_for_source(self, source: str) -> dict:
-        """Get all speakers for a source type."""
+    def _fuzzy_match_reverse(self, value: str, mapping: dict) -> str | None:
+        """Match a value in mapping, return key (name)."""
+        v = self._normalize(value)
+        for k, mv in mapping.items():
+            if v == self._normalize(mv):
+                return k
+        return None
+
+    def get_speakers(self, source: str) -> dict:
         return self.speakers.get(source, {})
 
-    def get_speaker_victrola_id(self, source: str, speaker_name: str) -> str | None:
-        """Get the Victrola ID for a named speaker."""
-        speakers = self.speakers.get(source, {})
-        speaker = speakers.get(speaker_name)
-        return speaker["victrola_id"] if speaker else None
+    def get_speaker_names(self, source: str) -> list[str]:
+        return list(self.speakers.get(source, {}).keys())
 
-    def add_learned_speaker(self, source: str, speaker_name: str, victrola_id: str):
-        """Add a manually learned speaker mapping."""
-        if source not in self.speakers:
-            self.speakers[source] = {}
-        self.speakers[source][speaker_name] = {
-            "name": speaker_name,
-            "entity_id": None,
-            "victrola_id": victrola_id,
-            "mapped": True,
-            "learned": True,
-        }
-        _LOGGER.info("Learned speaker: %s/%s = %s", source, speaker_name, victrola_id)
+    def get_victrola_id(self, source: str, speaker_name: str) -> str | None:
+        s = self.speakers.get(source, {}).get(speaker_name)
+        return s["victrola_id"] if s else None

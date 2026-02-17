@@ -1,37 +1,29 @@
-"""Media player platform for Victrola Stream."""
+"""Media player for Victrola Stream."""
 from __future__ import annotations
-
 import logging
-from typing import Any
-
 from homeassistant.components.media_player import (
-    MediaPlayerEntity,
-    MediaPlayerEntityFeature,
-    MediaPlayerState,
+    MediaPlayerEntity, MediaPlayerEntityFeature, MediaPlayerState,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-
-from .const import DOMAIN, CONF_DEVICE_NAME, SOURCE_TYPE_MAP, SOURCES
-from .coordinator import VictrolaCoordinator
+from .const import (
+    DOMAIN, CONF_DEVICE_NAME, SOURCES,
+    SOURCE_TO_DEFAULT_TYPE, SOURCE_TO_QUICKPLAY_TYPE,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
 
-async def async_setup_entry(
-    hass: HomeAssistant,
-    config_entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
-) -> None:
-    data = hass.data[DOMAIN][config_entry.entry_id]
-    device_name = config_entry.data.get(CONF_DEVICE_NAME, "Victrola Stream Pearl")
-    async_add_entities([VictrolaMediaPlayer(data, config_entry, device_name)])
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
+    data = hass.data[DOMAIN][entry.entry_id]
+    device_name = entry.data.get(CONF_DEVICE_NAME, "Victrola Stream Pearl")
+    async_add_entities([VictrolaMediaPlayer(data, entry, device_name)])
 
 
 class VictrolaMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
-    """Victrola Stream media player entity."""
+    """Victrola Stream media player."""
 
     _attr_has_entity_name = True
     _attr_name = None
@@ -40,14 +32,13 @@ class VictrolaMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
         | MediaPlayerEntityFeature.SELECT_SOUND_MODE
     )
 
-    def __init__(self, data: dict, config_entry: ConfigEntry, device_name: str):
+    def __init__(self, data: dict, entry: ConfigEntry, device_name: str):
         super().__init__(data["coordinator"])
         self._api = data["api"]
         self._discovery = data["discovery"]
+        self._state_store = data["state_store"]
         self._device_name = device_name
-        self._attr_unique_id = f"{config_entry.entry_id}_media_player"
-        self._current_source = "roon"
-        self._current_speaker: str | None = None
+        self._attr_unique_id = f"{entry.entry_id}_media_player"
 
     @property
     def device_info(self):
@@ -60,23 +51,15 @@ class VictrolaMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
 
     @property
     def state(self) -> MediaPlayerState:
-        """Return state based on coordinator data."""
-        output = self.coordinator.data.get("current_output") if self.coordinator.data else None
-        if output:
+        if not self._state_store.connected:
+            return MediaPlayerState.OFF
+        if self._state_store.current_speaker:
             return MediaPlayerState.PLAYING
         return MediaPlayerState.IDLE
 
     @property
     def source(self) -> str | None:
-        """Return current source."""
-        output = self.coordinator.data.get("current_output") if self.coordinator.data else None
-        if output and isinstance(output, dict):
-            source_type = output.get("type", "")
-            for source, victrola_type in SOURCE_TYPE_MAP.items():
-                if victrola_type == source_type:
-                    self._current_source = source
-                    return source
-        return self._current_source
+        return self._state_store.current_source
 
     @property
     def source_list(self) -> list[str]:
@@ -84,52 +67,47 @@ class VictrolaMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
 
     @property
     def sound_mode(self) -> str | None:
-        """Return current speaker (sound mode)."""
-        output = self.coordinator.data.get("current_output") if self.coordinator.data else None
-        if output and isinstance(output, dict):
-            return output.get("name", self._current_speaker)
-        return self._current_speaker
+        return self._state_store.current_speaker
 
     @property
     def sound_mode_list(self) -> list[str] | None:
-        """Return available speakers for current source."""
-        speakers = self._discovery.get_speakers_for_source(self._current_source)
-        return list(speakers.keys()) if speakers else None
+        return self._discovery.get_speaker_names(self._state_store.current_source)
 
     @property
     def extra_state_attributes(self) -> dict:
-        """Return extra state attributes from coordinator."""
-        attrs = {}
-        if self.coordinator.data:
-            attrs["audio_quality"] = self.coordinator.data.get("audio_quality")
-            attrs["audio_latency"] = self.coordinator.data.get("audio_latency")
-            attrs["knob_brightness"] = self.coordinator.data.get("knob_brightness")
-            attrs["current_output"] = self.coordinator.data.get("current_output")
-        return attrs
+        return {
+            "current_source": self._state_store.current_source,
+            "current_speaker": self._state_store.current_speaker,
+            "current_speaker_id": self._state_store.current_speaker_id,
+            "audio_quality": self._state_store.audio_quality,
+            "audio_latency": self._state_store.audio_latency,
+            "knob_brightness": self._state_store.knob_brightness,
+            "connected": self._state_store.connected,
+        }
 
     async def async_select_source(self, source: str) -> None:
-        """Select input source - updates HA state only, speaker select triggers API."""
-        self._current_source = source
+        """Switch source - updates state only, user then picks speaker."""
+        self._state_store.current_source = source
+        self._state_store.current_speaker = None
+        self._state_store.current_speaker_id = None
         self.async_write_ha_state()
 
     async def async_select_sound_mode(self, sound_mode: str) -> None:
-        """Select speaker - makes real API call to Victrola."""
-        victrola_id = self._discovery.get_speaker_victrola_id(self._current_source, sound_mode)
+        """Select speaker and send to Victrola."""
+        source = self._state_store.current_source
+        victrola_id = self._discovery.get_victrola_id(source, sound_mode)
 
         if not victrola_id:
-            _LOGGER.error("No Victrola ID for speaker: %s/%s", self._current_source, sound_mode)
+            _LOGGER.error("No Victrola ID for %s / %s", source, sound_mode)
             return
 
-        source_type = SOURCE_TYPE_MAP.get(self._current_source)
-        if not source_type:
-            _LOGGER.error("Unknown source type: %s", self._current_source)
-            return
+        default_type = SOURCE_TO_DEFAULT_TYPE.get(source)
+        quickplay_type = SOURCE_TO_QUICKPLAY_TYPE.get(source)
 
-        success = await self._api.async_set_source(source_type, victrola_id)
+        success = await self._api.async_select_speaker(default_type, quickplay_type, victrola_id)
         if success:
-            self._current_speaker = sound_mode
+            self._state_store.set_speaker(source, sound_mode, victrola_id)
             self.async_write_ha_state()
-            # Refresh coordinator to verify state change
             await self.coordinator.async_request_refresh()
         else:
-            _LOGGER.error("Failed to set speaker on Victrola: %s", sound_mode)
+            _LOGGER.error("Failed to set speaker: %s / %s", source, sound_mode)

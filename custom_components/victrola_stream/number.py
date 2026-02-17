@@ -1,46 +1,38 @@
-"""Number platform for Victrola Stream - audio latency control."""
+"""Number platform - Knob brightness slider 0-100."""
 from __future__ import annotations
-
 import logging
-
 from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-
-from .const import DOMAIN, LATENCY_MIN, LATENCY_MAX, LATENCY_STEP
+from .const import DOMAIN, BRIGHTNESS_MIN, BRIGHTNESS_MAX, BRIGHTNESS_STEP
 
 _LOGGER = logging.getLogger(__name__)
 
 
-async def async_setup_entry(
-    hass: HomeAssistant,
-    config_entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
-) -> None:
-    data = hass.data[DOMAIN][config_entry.entry_id]
-    async_add_entities([VictrolaLatencyNumber(data, config_entry)])
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
+    data = hass.data[DOMAIN][entry.entry_id]
+    async_add_entities([VictrolaKnobBrightnessNumber(data, entry)])
 
 
-class VictrolaLatencyNumber(CoordinatorEntity, NumberEntity):
-    """Number entity for audio latency in milliseconds."""
+class VictrolaKnobBrightnessNumber(CoordinatorEntity, NumberEntity):
+    """Knob brightness slider 0-100."""
 
     _attr_has_entity_name = True
-    _attr_name = "Audio Latency"
-    _attr_icon = "mdi:timer-outline"
-    _attr_native_min_value = LATENCY_MIN
-    _attr_native_max_value = LATENCY_MAX
-    _attr_native_step = LATENCY_STEP
+    _attr_name = "Knob Brightness"
+    _attr_icon = "mdi:knob"
+    _attr_native_min_value = BRIGHTNESS_MIN
+    _attr_native_max_value = BRIGHTNESS_MAX
+    _attr_native_step = BRIGHTNESS_STEP
     _attr_mode = NumberMode.SLIDER
-    _attr_native_unit_of_measurement = "ms"
+    _attr_native_unit_of_measurement = "%"
 
-    def __init__(self, data: dict, config_entry: ConfigEntry):
+    def __init__(self, data: dict, entry: ConfigEntry):
         super().__init__(data["coordinator"])
         self._api = data["api"]
-        self._attr_unique_id = f"{config_entry.entry_id}_audio_latency"
-        self._attr_native_value = 0
+        self._state_store = data["state_store"]
+        self._attr_unique_id = f"{entry.entry_id}_knob_brightness"
 
     @property
     def device_info(self):
@@ -48,16 +40,13 @@ class VictrolaLatencyNumber(CoordinatorEntity, NumberEntity):
 
     @property
     def native_value(self) -> float:
-        if self.coordinator.data:
-            return self.coordinator.data.get("audio_latency", 0) or 0
-        return self._attr_native_value
+        return self._state_store.knob_brightness
 
     async def async_set_native_value(self, value: float) -> None:
-        """Set audio latency - real API call."""
-        success = await self._api.async_set_audio_latency(int(value))
+        """Set knob brightness via API."""
+        success = await self._api.async_set_knob_brightness(int(value))
         if success:
-            self._attr_native_value = value
+            self._state_store.set_knob_brightness(int(value))
             self.async_write_ha_state()
-            await self.coordinator.async_request_refresh()
         else:
-            _LOGGER.error("Failed to set audio latency: %s", value)
+            _LOGGER.error("Failed to set knob brightness: %s", value)
