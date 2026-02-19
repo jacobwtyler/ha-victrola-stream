@@ -87,7 +87,13 @@ class VictrolaRediscoverButton(ButtonEntity):
     async def async_press(self) -> None:
         """Rediscover speakers for currently active source only."""
         current = self._state_store.current_source
+        if not current:
+            _LOGGER.warning("No source currently active, skipping rediscovery")
+            return
         _LOGGER.info("Rediscovering %s speakers...", current)
-        await self._discovery.async_rediscover_current()
+        # Call discovery directly with the known current source
+        await self._discovery._discover_source(current)
+        if current in ["Sonos", "Roon"]:
+            await self._discovery._update_quickplay()
         await self._coordinator.async_request_refresh()
         _LOGGER.info("%s speaker rediscovery complete", current)

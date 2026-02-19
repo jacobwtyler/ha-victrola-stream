@@ -1,5 +1,6 @@
 """Select platform - unified QuickPlay, Audio settings, Default Output per source."""
 from __future__ import annotations
+import asyncio
 import logging
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
@@ -28,9 +29,10 @@ async def async_setup_entry(
         VictrolaAudioLatencySelect(data, entry),
         VictrolaUnifiedQuickPlaySelect(data, entry),  # ONE unified select from live list
     ]
-    # Default Output selects remain per-source (different semantics)
-    for source in [SOURCE_ROON, SOURCE_SONOS, SOURCE_UPNP, SOURCE_BLUETOOTH]:
+    # Default Output selects remain per-source (different semantics) - Bluetooth last
+    for source in [SOURCE_ROON, SOURCE_SONOS, SOURCE_UPNP]:
         entities.append(VictrolaDefaultOutputSelect(data, entry, source))
+    entities.append(VictrolaDefaultOutputSelect(data, entry, SOURCE_BLUETOOTH))
 
     async_add_entities(entities)
 
@@ -64,20 +66,24 @@ class VictrolaAudioSourceSelect(VictrolaBaseSelect):
         return self._state_store.current_source
 
     async def async_select_option(self, option: str) -> None:
-        previous = self._state_store.current_source
-        if previous and previous != option:
-            await self._api.async_set_source_enabled(previous.lower(), False)
-            self._state_store.set_source_enabled(previous, False)
+        """Switch to a new source - disable all others first."""
+        _LOGGER.info("Switching audio source to: %s", option)
         
-        # Enable new source
+        # Disable ALL sources first to avoid conflicts
+        for source in SOURCES:
+            if source != option:
+                await self._api.async_set_source_enabled(source.lower(), False)
+                self._state_store.set_source_enabled(source, False)
+        
+        # Enable the selected source
         await self._api.async_set_source_enabled(option.lower(), True)
         self._state_store.set_source_enabled(option, True)
         self._state_store.current_source = option
         
-        # Trigger discovery for the new source
-        _LOGGER.info("Source changed to %s, discovering speakers...", option)
-        await self._discovery.async_rediscover_current()
+        # Wait a moment for device to stabilize
+        await asyncio.sleep(0.5)
         
+        _LOGGER.info("Source changed to %s successfully", option)
         self.async_write_ha_state()
         await self.coordinator.async_request_refresh()
 

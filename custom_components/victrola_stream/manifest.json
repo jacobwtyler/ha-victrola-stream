@@ -1,7 +1,7 @@
 {
   "domain": "victrola_stream",
   "name": "Victrola Stream",
-  "version": "2.6.0",
+  "version": "2.7.1",
   "documentation": "https://github.com/jacobwtyler/ha-victrola-stream",
   "issue_tracker": "https://github.com/jacobwtyler/ha-victrola-stream/issues",
   "codeowners": ["@jacobwtyler"],
@@ -9,5 +9,6 @@
   "dependencies": [],
   "requirements": [],
   "iot_class": "local_push",
-  "integration_type": "device"
+  "integration_type": "device",
+  "icon": "images/icon"
 }

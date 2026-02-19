@@ -70,12 +70,24 @@ class VictrolaCoordinator(DataUpdateCoordinator):
                     "upnp_enabled":      SOURCE_UPNP,
                     "bluetooth_enabled": SOURCE_BLUETOOTH,
                 }
+                enabled_sources = []
                 for key, source in source_map.items():
                     val = device_state.get(key)
                     if val is not None:
                         self.state_store.set_source_enabled(source, val)
                         if val:
-                            self.state_store.current_source = source
+                            enabled_sources.append(source)
+                
+                # Only update current_source if exactly one is enabled
+                if len(enabled_sources) == 1:
+                    self.state_store.current_source = enabled_sources[0]
+                elif len(enabled_sources) == 0:
+                    self.state_store.current_source = None
+                    _LOGGER.warning("No audio sources enabled!")
+                else:
+                    # Multiple sources enabled - device is in bad state, log but don't change
+                    _LOGGER.warning("Multiple sources enabled: %s - keeping current: %s", 
+                                    enabled_sources, self.state_store.current_source)
 
                 # Default output IDs → register in discovery + store
                 id_map = {
