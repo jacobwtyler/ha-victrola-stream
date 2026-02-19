@@ -15,6 +15,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     async_add_entities([
         VictrolaRebootButton(data, entry),
         VictrolaRefreshButton(data, entry),
+        VictrolaRediscoverButton(data, entry),
     ])
 
 
@@ -63,3 +64,30 @@ class VictrolaRefreshButton(ButtonEntity):
     async def async_press(self) -> None:
         await self._coordinator.async_request_refresh()
         _LOGGER.info("State refresh requested")
+
+
+class VictrolaRediscoverButton(ButtonEntity):
+    """Rediscover speakers for the currently active source."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Rediscover Speakers"
+    _attr_icon = "mdi:speaker-multiple"
+
+    def __init__(self, data: dict, entry: ConfigEntry):
+        self._api = data["api"]
+        self._discovery = data["discovery"]
+        self._coordinator = data["coordinator"]
+        self._state_store = data["state_store"]
+        self._attr_unique_id = f"{entry.entry_id}_rediscover"
+
+    @property
+    def device_info(self):
+        return {"identifiers": {(DOMAIN, self._api.host)}}
+
+    async def async_press(self) -> None:
+        """Rediscover speakers for currently active source only."""
+        current = self._state_store.current_source
+        _LOGGER.info("Rediscovering %s speakers...", current)
+        await self._discovery.async_rediscover_current()
+        await self._coordinator.async_request_refresh()
+        _LOGGER.info("%s speaker rediscovery complete", current)

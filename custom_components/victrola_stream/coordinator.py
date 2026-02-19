@@ -23,6 +23,7 @@ class VictrolaCoordinator(DataUpdateCoordinator):
         self.api = api
         self.state_store = state_store
         self.discovery = discovery
+        self._discovery_done = False  # Run full discovery once on startup
 
     async def _async_update_data(self) -> dict[str, Any]:
         try:
@@ -30,6 +31,11 @@ class VictrolaCoordinator(DataUpdateCoordinator):
             self.state_store.connected = connected
             if not connected:
                 return self.state_store.to_dict()
+
+            # ── ONE-TIME: Full speaker discovery on first refresh ──
+            if not self._discovery_done:
+                await self.discovery.async_discover_all()
+                self._discovery_done = True
 
             # ── 1. speakerQuickplay → live speaker list + current quickplay ──
             qp_state = await self.api.async_get_quickplay_state()

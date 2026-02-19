@@ -68,9 +68,16 @@ class VictrolaAudioSourceSelect(VictrolaBaseSelect):
         if previous and previous != option:
             await self._api.async_set_source_enabled(previous.lower(), False)
             self._state_store.set_source_enabled(previous, False)
+        
+        # Enable new source
         await self._api.async_set_source_enabled(option.lower(), True)
         self._state_store.set_source_enabled(option, True)
         self._state_store.current_source = option
+        
+        # Trigger discovery for the new source
+        _LOGGER.info("Source changed to %s, discovering speakers...", option)
+        await self._discovery.async_rediscover_current()
+        
         self.async_write_ha_state()
         await self.coordinator.async_request_refresh()
 

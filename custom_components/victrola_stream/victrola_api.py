@@ -477,6 +477,71 @@ class VictrolaAPI:
         """Send quickplay using speaker path if available, else fall back to ID."""
         return await self.async_quickplay(victrola_type, speaker_id)
 
+    async def async_get_speaker_selection(self) -> list[dict]:
+        """Fetch victrola:ui/speakerSelection getRows - all speakers for current source.
+        
+        Returns list of speaker dicts with: title, type, id, path, preferred
+        Types: victrolaOutputSonos, victrolaOutputRoon, victrolaOutputUPnP, victrolaOutputBluetooth
+        """
+        try:
+            from urllib.parse import quote
+            url = f"{self.base_url}/api/getRows?path={quote('victrola:ui/speakerSelection')}&roles=%40all&from=0&to=100&type=structure&_nocache={int(__import__('time').time()*1000)}"
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    url,
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as r:
+                    if r.status == 200:
+                        data = await r.json(content_type=None)
+                        rows = data.get("rows", [])
+                        speakers = []
+                        for row in rows:
+                            if not isinstance(row, dict):
+                                continue
+                            row_type = row.get("type", "")
+                            # Filter for actual speaker entries (not headers, toggles, etc)
+                            if row_type in (
+                                "victrolaOutputSonos",
+                                "victrolaOutputRoon",
+                                "victrolaOutputUPnP",
+                                "victrolaOutputBluetooth",
+                            ):
+                                speaker = {
+                                    "title": row.get("title"),
+                                    "type": row_type,
+                                    "id": row.get("id"),
+                                    "path": row.get("path"),
+                                    "preferred": row.get("preferred", False),
+                                }
+                                # For Sonos, also grab full sonosGroup details
+                                if row_type == "victrolaOutputSonos":
+                                    val = row.get("value", {})
+                                    if val and val.get("type") == "sonosGroup":
+                                        sg = val.get("sonosGroup", {})
+                                        speaker["sonos_group_id"] = sg.get("sonosGroupId")
+                                        speaker["group_name"] = sg.get("groupName")
+                                speakers.append(speaker)
+                        return speakers
+        except Exception as err:
+            _LOGGER.error("speakerSelection getRows error: %s", err)
+        return []
+
+    async def async_get_autoplay(self) -> bool | None:
+        """Get current autoplay state."""
+        try:
+            from urllib.parse import quote
+            url = f"{self.base_url}/api/getData?path={quote('settings:/victrola/autoplay')}&roles=value&type=structure&_nocache={int(__import__('time').time()*1000)}"
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as r:
+                    if r.status == 200:
+                        data = await r.json(content_type=None)
+                        val = data.get("value", {})
+                        if val and val.get("type") == "bool_":
+                            return val.get("bool_")
+        except Exception as err:
+            _LOGGER.error("get autoplay error: %s", err)
+        return None
+
     async def async_reboot(self) -> bool:
         """Reboot the Victrola device."""
         _LOGGER.warning("Sending reboot command to Victrola at %s", self.host)

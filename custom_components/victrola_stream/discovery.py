@@ -1,117 +1,215 @@
-"""Dynamic speaker discovery - populated from device's live speakerQuickplay API."""
+"""Safe speaker discovery via victrola:ui/speakerSelection.
+
+Switches sources temporarily with autoplay disabled to discover all speakers.
+"""
 from __future__ import annotations
+import asyncio
 import logging
 from homeassistant.core import HomeAssistant
-from .const import SOURCE_SONOS, SOURCE_ROON, SOURCE_UPNP, SOURCE_BLUETOOTH, DEFAULT_ROON_CORE_ID
+from .const import SOURCE_SONOS, SOURCE_ROON, SOURCE_UPNP, SOURCE_BLUETOOTH
 
 _LOGGER = logging.getLogger(__name__)
 
+# Discovery delays per source (seconds to wait for speaker list to populate)
+DISCOVERY_DELAYS = {
+    SOURCE_SONOS:     5,
+    SOURCE_ROON:      8,
+    SOURCE_UPNP:      5,
+    SOURCE_BLUETOOTH: 5,
+}
+
 
 class VictrolaDiscovery:
-    """Manages live speaker list fetched from victrola:ui/speakerQuickplay.
-
-    Speaker data is populated on startup and refreshed each coordinator cycle.
-    Each speaker entry: {name -> {victrola_id, path, type, sonos_group_id, source}}
+    """Discovers speakers by temporarily enabling each source.
+    
+    Safe discovery procedure:
+    1. Save current source + autoplay state
+    2. Disable autoplay (prevent playback during discovery)
+    3. Enable each source, wait, read speakerSelection
+    4. Restore original source + autoplay
     """
 
-    def __init__(self, hass: HomeAssistant) -> None:
+    def __init__(self, hass: HomeAssistant, api) -> None:
         self._hass = hass
-        # Live speakers from speakerQuickplay (Sonos-based, from device)
-        self._quickplay_speakers: dict[str, dict] = {}
-        # Roon/UPnP/Bluetooth from settings:/victrola getRows
-        self._default_output_speakers: dict[str, dict[str, dict]] = {
-            SOURCE_ROON:      {},
+        self._api = api
+        # Speaker cache: {source: {name: {id, type, path, ...}}}
+        self._speakers: dict[str, dict[str, dict]] = {
             SOURCE_SONOS:     {},
+            SOURCE_ROON:      {},
             SOURCE_UPNP:      {},
             SOURCE_BLUETOOTH: {},
         }
+        # QuickPlay speakers (Sonos-only, from speakerQuickplay)
+        self._quickplay_speakers: dict[str, dict] = {}
 
-    def update_from_quickplay(self, speakers: list[dict]) -> None:
-        """Update speaker list from speakerQuickplay getRows response."""
-        self._quickplay_speakers = {}
-        self._default_output_speakers[SOURCE_SONOS] = {}
+    async def async_discover_all(self) -> None:
+        """Safely discover speakers from all sources.
+        
+        Called on startup only. Takes ~25 seconds.
+        """
+        _LOGGER.info("Starting speaker discovery across all sources...")
+        
+        try:
+            # 1. Save current state
+            original_autoplay = await self._api.async_get_autoplay()
+            original_source = await self._get_current_source()
+            _LOGGER.debug("Saved state: source=%s, autoplay=%s", original_source, original_autoplay)
 
-        for spk in speakers:
-            name  = spk.get("name") or spk.get("title")
-            spk_id = spk.get("id")
-            if not name or not spk_id:
+            # 2. Disable autoplay to prevent playback during discovery
+            if original_autoplay:
+                await self._api.async_set_autoplay(False)
+                await asyncio.sleep(0.5)
+
+            # 3. Discover each source
+            for source in [SOURCE_SONOS, SOURCE_ROON, SOURCE_UPNP, SOURCE_BLUETOOTH]:
+                await self._discover_source(source)
+
+            # 4. Update QuickPlay speakers (reads speakerQuickplay)
+            await self._update_quickplay()
+
+            # 5. Restore original state (CRITICAL: end on original source)
+            if original_source:
+                await self._enable_source(original_source)
+                await asyncio.sleep(1)
+            if original_autoplay:
+                await self._api.async_set_autoplay(True)
+
+            total = sum(len(speakers) for speakers in self._speakers.values())
+            _LOGGER.info(
+                "Discovery complete: %d speakers (%s: %d, %s: %d, %s: %d, %s: %d)",
+                total,
+                SOURCE_SONOS, len(self._speakers[SOURCE_SONOS]),
+                SOURCE_ROON, len(self._speakers[SOURCE_ROON]),
+                SOURCE_UPNP, len(self._speakers[SOURCE_UPNP]),
+                SOURCE_BLUETOOTH, len(self._speakers[SOURCE_BLUETOOTH]),
+            )
+
+        except Exception as err:
+            _LOGGER.error("Discovery failed: %s", err)
+
+    async def async_rediscover_current(self) -> None:
+        """Rediscover speakers for currently active source only.
+        
+        Called when user presses Rediscover button or manually changes source.
+        Takes 5-8 seconds depending on source.
+        """
+        current_source = await self._get_current_source()
+        if not current_source:
+            _LOGGER.warning("No source currently active, skipping rediscovery")
+            return
+        
+        _LOGGER.info("Rediscovering %s speakers (already on this source)...", current_source)
+        await self._discover_source(current_source)
+        
+        # Also update QuickPlay if relevant
+        if current_source in (SOURCE_SONOS, SOURCE_ROON):
+            await self._update_quickplay()
+
+    async def _discover_source(self, source: str) -> None:
+        """Enable a source, wait for discovery, read speakers."""
+        _LOGGER.debug("Discovering %s speakers...", source)
+        
+        # Enable source
+        await self._enable_source(source)
+        
+        # Wait for device to discover speakers
+        delay = DISCOVERY_DELAYS.get(source, 5)
+        await asyncio.sleep(delay)
+        
+        # Read speakerSelection
+        speakers_list = await self._api.async_get_speaker_selection()
+        
+        # Parse and cache
+        self._speakers[source] = {}
+        for spk in speakers_list:
+            name = spk.get("title")
+            if not name:
                 continue
-
-            entry = {
-                "victrola_id":    spk_id,
-                "path":           spk.get("path"),
-                "type":           spk.get("type", "victrolaQuickplaySonos"),
+            self._speakers[source][name] = {
+                "id": spk.get("id"),
+                "type": spk.get("type"),
+                "path": spk.get("path"),
+                "preferred": spk.get("preferred", False),
                 "sonos_group_id": spk.get("sonos_group_id"),
-                "source":         SOURCE_SONOS,
-                "preferred":      spk.get("preferred", False),
             }
-            self._quickplay_speakers[name] = entry
-            self._default_output_speakers[SOURCE_SONOS][name] = entry
+        
+        _LOGGER.debug("Found %d %s speakers: %s", 
+                      len(self._speakers[source]), source, 
+                      list(self._speakers[source].keys()))
 
-        _LOGGER.debug(
-            "Discovery updated: %d quickplay speakers: %s",
-            len(self._quickplay_speakers),
-            list(self._quickplay_speakers.keys()),
-        )
+    async def _update_quickplay(self) -> None:
+        """Update QuickPlay speaker list (from speakerQuickplay)."""
+        qp_state = await self._api.async_get_quickplay_state()
+        if qp_state.get("speakers"):
+            self._quickplay_speakers = {}
+            for spk in qp_state["speakers"]:
+                name = spk.get("name")
+                if name:
+                    self._quickplay_speakers[name] = {
+                        "id": spk.get("id"),
+                        "path": spk.get("path"),
+                        "type": spk.get("type"),
+                        "preferred": spk.get("preferred", False),
+                    }
 
-    def update_roon_speaker(self, name: str, victrola_id: str) -> None:
-        """Register a Roon speaker by its full output ID."""
-        self._default_output_speakers[SOURCE_ROON][name] = {
-            "victrola_id": victrola_id,
-            "source": SOURCE_ROON,
+    async def _enable_source(self, source: str) -> None:
+        """Enable a specific source."""
+        source_map = {
+            SOURCE_SONOS:     "sonosEnabled",
+            SOURCE_ROON:      "roonEnabled",
+            SOURCE_UPNP:      "upnpEnabled",
+            SOURCE_BLUETOOTH: "bluetoothEnabled",
         }
+        path = source_map.get(source)
+        if path:
+            await self._api.async_set_source_enabled(path.replace("Enabled", ""), True)
 
-    def update_upnp_speaker(self, name: str, victrola_id: str) -> None:
-        """Register a UPnP speaker by its UUID."""
-        self._default_output_speakers[SOURCE_UPNP][name] = {
-            "victrola_id": victrola_id,
-            "source": SOURCE_UPNP,
-        }
+    async def _get_current_source(self) -> str | None:
+        """Determine which source is currently enabled."""
+        state = await self._api.async_get_current_default_outputs()
+        if state.get("roon_enabled"):
+            return SOURCE_ROON
+        if state.get("sonos_enabled"):
+            return SOURCE_SONOS
+        if state.get("upnp_enabled"):
+            return SOURCE_UPNP
+        if state.get("bluetooth_enabled"):
+            return SOURCE_BLUETOOTH
+        return None
 
-    def update_bluetooth_speaker(self, name: str, victrola_id: str) -> None:
-        """Register a Bluetooth speaker."""
-        self._default_output_speakers[SOURCE_BLUETOOTH][name] = {
-            "victrola_id": victrola_id,
-            "source": SOURCE_BLUETOOTH,
-        }
-
-    # ── Public accessors ─────────────────────────────────────────────────
-
-    def get_quickplay_speakers(self) -> dict[str, dict]:
-        """Return all speakers available for quickplay (live from device)."""
-        return self._quickplay_speakers
-
-    def get_quickplay_speaker_names(self) -> list[str]:
-        """Return sorted list of quickplay speaker names."""
-        return sorted(self._quickplay_speakers.keys())
+    # ── Public accessors for select entities ─────────────────────────────
 
     def get_speakers(self, source: str) -> dict[str, dict]:
-        """Return speakers for a specific source (for Default Output selects)."""
-        return self._default_output_speakers.get(source, {})
+        """Get all speakers for a source (for Default Output selects)."""
+        return self._speakers.get(source, {})
 
     def get_speaker_names(self, source: str) -> list[str]:
-        """Return sorted speaker names for a source."""
-        return sorted(self._default_output_speakers.get(source, {}).keys())
+        """Get sorted speaker names for a source."""
+        return sorted(self._speakers.get(source, {}).keys())
 
     def get_victrola_id(self, source: str, name: str) -> str | None:
         """Get Victrola ID for a speaker by source + name."""
-        speakers = self._default_output_speakers.get(source, {})
+        speakers = self._speakers.get(source, {})
         entry = speakers.get(name)
-        return entry.get("victrola_id") if entry else None
+        return entry.get("id") if entry else None
+
+    def get_quickplay_speakers(self) -> dict[str, dict]:
+        """Get all QuickPlay speakers (live from speakerQuickplay)."""
+        return self._quickplay_speakers
+
+    def get_quickplay_speaker_names(self) -> list[str]:
+        """Get sorted QuickPlay speaker names."""
+        return sorted(self._quickplay_speakers.keys())
 
     def get_quickplay_id(self, name: str) -> str | None:
-        """Get Victrola ID for a quickplay speaker by name."""
+        """Get Victrola ID for a QuickPlay speaker by name."""
         entry = self._quickplay_speakers.get(name)
-        return entry.get("victrola_id") if entry else None
+        return entry.get("id") if entry else None
 
-    def find_speaker_name_by_id(self, victrola_id: str) -> str | None:
-        """Reverse lookup: find any speaker name from its ID across all sources."""
-        for source_dict in self._default_output_speakers.values():
+    def find_speaker_name_by_id(self, speaker_id: str) -> str | None:
+        """Reverse lookup: find speaker name from its ID across all sources."""
+        for source_dict in self._speakers.values():
             for name, info in source_dict.items():
-                if info.get("victrola_id") == victrola_id:
+                if info.get("id") == speaker_id:
                     return name
         return None
-
-    async def async_discover_all(self) -> None:
-        """Called on startup - actual population happens via coordinator first refresh."""
-        _LOGGER.debug("Discovery initialized - speakers will populate on first coordinator refresh")

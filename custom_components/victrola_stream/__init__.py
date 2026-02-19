@@ -38,7 +38,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     api         = VictrolaAPI(victrola_ip, victrola_port)
     state_store = VictrolaStateStore()
-    discovery   = VictrolaDiscovery(hass)
+    discovery   = VictrolaDiscovery(hass, api)
 
     coordinator = VictrolaCoordinator(hass, api, state_store, discovery)
     # First refresh populates speaker list from device
