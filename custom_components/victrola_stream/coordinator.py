@@ -40,7 +40,6 @@ class VictrolaCoordinator(DataUpdateCoordinator):
             # ── 1. speakerQuickplay → live speaker list + current quickplay ──
             qp_state = await self.api.async_get_quickplay_state()
             if qp_state.get("speakers"):
-                self.discovery.update_from_quickplay(qp_state["speakers"])
                 self.state_store.available_quickplay_speakers = qp_state["speakers"]
             if qp_state.get("current_quickplay_name"):
                 self.state_store.set_quickplay(
@@ -92,12 +91,6 @@ class VictrolaCoordinator(DataUpdateCoordinator):
                         self.state_store.set_default_output(
                             source, name or speaker_id, speaker_id
                         )
-                        # Register in discovery if not already known
-                        if name is None:
-                            if source == SOURCE_ROON:
-                                self.discovery.update_roon_speaker(speaker_id, speaker_id)
-                            elif source == SOURCE_UPNP:
-                                self.discovery.update_upnp_speaker(speaker_id, speaker_id)
 
             # ── 3. ui: getRows → authoritative default speaker name ──
             ui_state = await self.api.async_get_ui_state()
