@@ -171,16 +171,16 @@ class VictrolaDiscovery:
                     }
 
     async def _enable_source(self, source: str) -> None:
-        """Enable a specific source."""
-        source_map = {
-            SOURCE_SONOS:     "sonosEnabled",
-            SOURCE_ROON:      "roonEnabled",
-            SOURCE_UPNP:      "upnpEnabled",
-            SOURCE_BLUETOOTH: "bluetoothEnabled",
+        """Enable a specific source, disabling all others first."""
+        source_to_api = {
+            SOURCE_SONOS:     "sonos",
+            SOURCE_ROON:      "roon",
+            SOURCE_UPNP:      "upnp",
+            SOURCE_BLUETOOTH: "bluetooth",
         }
-        path = source_map.get(source)
-        if path:
-            await self._api.async_set_source_enabled(path.replace("Enabled", ""), True)
+        api_name = source_to_api.get(source)
+        if api_name:
+            await self._api.async_set_source_enabled(api_name, True)
 
     async def _get_current_source(self) -> str | None:
         """Determine which source is currently enabled."""
@@ -227,6 +227,40 @@ class VictrolaDiscovery:
         """Get Victrola ID for a QuickPlay speaker by name."""
         entry = self._quickplay_speakers.get(name)
         return entry.get("id") if entry else None
+
+    def update_from_quickplay(self, speakers: list[dict]) -> None:
+        """Update QuickPlay speaker cache from event listener data.
+
+        Called when the event listener receives a speakerQuickplay rows event.
+        Rebuilds the quickplay cache with source labels, same as _update_quickplay
+        but from pre-parsed speaker dicts instead of an API call.
+        """
+        self._quickplay_speakers = {}
+        for spk in speakers:
+            name = spk.get("name")
+            spk_type = spk.get("type", "")
+
+            if "Sonos" in spk_type:
+                source = SOURCE_SONOS
+            elif "Roon" in spk_type:
+                source = SOURCE_ROON
+            elif "UPnP" in spk_type:
+                source = SOURCE_UPNP
+            elif "Bluetooth" in spk_type:
+                source = SOURCE_BLUETOOTH
+            else:
+                source = "Unknown"
+
+            if name:
+                display_name = f"{name} ({source})"
+                self._quickplay_speakers[display_name] = {
+                    "id": spk.get("id"),
+                    "path": spk.get("path"),
+                    "type": spk_type,
+                    "source": source,
+                    "original_name": name,
+                    "preferred": spk.get("preferred", False),
+                }
 
     def find_speaker_name_by_id(self, speaker_id: str) -> str | None:
         """Reverse lookup: find speaker name from its ID across all sources."""

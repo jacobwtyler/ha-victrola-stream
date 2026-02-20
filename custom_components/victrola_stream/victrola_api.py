@@ -31,7 +31,7 @@ class VictrolaAPI:
                     timeout=aiohttp.ClientTimeout(total=5),
                 ) as response:
                     return response.status == 200
-        except Exception as err:
+        except (aiohttp.ClientError, TimeoutError, OSError) as err:
             _LOGGER.error("Connection test failed: %s", err)
             return False
 
@@ -62,7 +62,7 @@ class VictrolaAPI:
                         body = await response.text()
                         _LOGGER.warning("setData failed %s HTTP %s: %s", path, response.status, body)
                     return ok
-        except Exception as err:
+        except (aiohttp.ClientError, TimeoutError, OSError) as err:
             _LOGGER.error("setData error %s: %s", path, err)
             return False
 
@@ -224,7 +224,7 @@ class VictrolaAPI:
                                 data = await r.json(content_type=None)
                                 if isinstance(data, list) and data and data[0] is not None:
                                     return data[0]
-                    except Exception as e:
+                    except (aiohttp.ClientError, TimeoutError, OSError) as e:
                         _LOGGER.debug("getData %s failed: %s", path, e)
                     return None
 
@@ -259,7 +259,7 @@ class VictrolaAPI:
                 if d:
                     state["autoplay"] = bool(d.get("bool_", True))
 
-        except Exception as err:
+        except (aiohttp.ClientError, TimeoutError, OSError) as err:
             _LOGGER.error("get_full_state error: %s", err)
 
         return state
@@ -299,7 +299,7 @@ class VictrolaAPI:
                                     if val:
                                         result["autoplay"] = val.get("bool_")
                         return result
-        except Exception as err:
+        except (aiohttp.ClientError, TimeoutError, OSError) as err:
             _LOGGER.error("ui: getRows error: %s", err)
         return {}
 
@@ -350,7 +350,7 @@ class VictrolaAPI:
                                     row.get("title"), row.get("id")
                                 )
                         return result
-        except Exception as err:
+        except (aiohttp.ClientError, TimeoutError, OSError) as err:
             _LOGGER.error("speakerQuickplay getRows error: %s", err)
         return {}
 
@@ -378,7 +378,7 @@ class VictrolaAPI:
                             pt = val.get("powerTarget", {})
                             result["power_target"] = pt.get("target")
                             result["power_reason"] = pt.get("reason")
-        except Exception as err:
+        except (aiohttp.ClientError, TimeoutError, OSError) as err:
             _LOGGER.error("player state error: %s", err)
         return result
 
@@ -395,7 +395,7 @@ class VictrolaAPI:
                     if r.status == 200:
                         data = await r.json(content_type=None)
                         return data.get("rows", [])
-        except Exception as err:
+        except (aiohttp.ClientError, TimeoutError, OSError) as err:
             _LOGGER.error("getRows %s error: %s", path, err)
         return []
 
@@ -550,7 +550,7 @@ class VictrolaAPI:
                                         speaker["group_name"] = sg.get("groupName")
                                 speakers.append(speaker)
                         return speakers
-        except Exception as err:
+        except (aiohttp.ClientError, TimeoutError, OSError) as err:
             _LOGGER.error("speakerSelection getRows error: %s", err)
         return []
 
@@ -566,7 +566,7 @@ class VictrolaAPI:
                         val = data.get("value", {})
                         if val and val.get("type") == "bool_":
                             return val.get("bool_")
-        except Exception as err:
+        except (aiohttp.ClientError, TimeoutError, OSError) as err:
             _LOGGER.error("get autoplay error: %s", err)
         return None
 

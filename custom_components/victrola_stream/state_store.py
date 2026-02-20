@@ -41,39 +41,39 @@ class VictrolaStateStore:
         }
         self.connected: bool = False
 
-    def set_quickplay(self, source: str, speaker_name: str, speaker_id: str):
+    def set_quickplay(self, source: str, speaker_name: str, speaker_id: str) -> None:
         self.quickplay_source = source
         self.quickplay_speaker = speaker_name
         self.quickplay_speaker_id = speaker_id
 
-    def set_default_output(self, source: str, speaker_name: str, speaker_id: str):
+    def set_default_output(self, source: str, speaker_name: str, speaker_id: str) -> None:
         self.default_outputs[source] = {"name": speaker_name, "id": speaker_id}
 
     def get_default_output(self, source: str) -> dict | None:
         return self.default_outputs.get(source)
 
-    def set_audio_quality(self, label: str):
+    def set_audio_quality(self, label: str) -> None:
         if label in AUDIO_QUALITY_OPTIONS:
             self.audio_quality = label
 
-    def set_audio_latency(self, label: str):
+    def set_audio_latency(self, label: str) -> None:
         if label in AUDIO_LATENCY_OPTIONS:
             self.audio_latency = label
 
-    def set_rca_mode(self, mode: str):
+    def set_rca_mode(self, mode: str) -> None:
         if mode in RCA_MODE_OPTIONS:
             self.rca_mode = mode
 
-    def set_rca_delay(self, delay_ms: int):
+    def set_rca_delay(self, delay_ms: int) -> None:
         self.rca_delay = max(RCA_DELAY_MIN, min(RCA_DELAY_MAX, delay_ms))
 
-    def set_rca_fixed_volume(self, enabled: bool):
+    def set_rca_fixed_volume(self, enabled: bool) -> None:
         self.rca_fixed_volume = enabled
 
-    def set_knob_brightness(self, value: int):
+    def set_knob_brightness(self, value: int) -> None:
         self.knob_brightness = max(BRIGHTNESS_MIN, min(BRIGHTNESS_MAX, value))
 
-    def set_source_enabled(self, source: str, enabled: bool):
+    def set_source_enabled(self, source: str, enabled: bool) -> None:
         self.source_enabled[source] = enabled
 
     def to_dict(self) -> dict:

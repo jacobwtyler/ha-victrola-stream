@@ -10,7 +10,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from .const import DOMAIN, VICTROLA_TYPE_SONOS_QUICKPLAY, SOURCE_SONOS
+from .const import DOMAIN, SOURCE_SONOS, SOURCE_TO_QUICKPLAY_TYPE, VICTROLA_TYPE_SONOS_QUICKPLAY
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -44,7 +44,7 @@ class VictrolaMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
         self._attr_unique_id = f"{entry.entry_id}_media_player"
 
     @property
-    def device_info(self):
+    def device_info(self) -> dict:
         return {
             "identifiers":  {(DOMAIN, self._api.host)},
             "name":         "Victrola Stream Pearl",
@@ -118,11 +118,16 @@ class VictrolaMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
 
     async def async_select_sound_mode(self, sound_mode: str) -> None:
         """Select quickplay speaker via media player sound mode."""
-        speaker_id = self._discovery.get_quickplay_id(sound_mode)
+        speaker_info = self._discovery.get_quickplay_speaker(sound_mode)
+        if not speaker_info:
+            return
+        speaker_id = speaker_info.get("id")
         if not speaker_id:
             return
-        if await self._api.async_quickplay(VICTROLA_TYPE_SONOS_QUICKPLAY, speaker_id):
-            self._state_store.set_quickplay(SOURCE_SONOS, sound_mode, speaker_id)
+        source = speaker_info.get("source", SOURCE_SONOS)
+        quickplay_type = SOURCE_TO_QUICKPLAY_TYPE.get(source, VICTROLA_TYPE_SONOS_QUICKPLAY)
+        if await self._api.async_quickplay(quickplay_type, speaker_id):
+            self._state_store.set_quickplay(source, sound_mode, speaker_id)
             self.async_write_ha_state()
 
     # ── Extra attributes ──────────────────────────────────────────────

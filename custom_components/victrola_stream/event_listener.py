@@ -6,7 +6,6 @@ to receive instant state updates when the device or web UI changes state.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
 import uuid
@@ -99,7 +98,7 @@ class VictrolaEventListener:
 
             except asyncio.CancelledError:
                 break
-            except Exception as err:
+            except (aiohttp.ClientError, TimeoutError, OSError, ConnectionError) as err:
                 self._failures += 1
                 _LOGGER.warning(
                     "Event listener error (attempt %d): %s", self._failures, err
@@ -189,8 +188,8 @@ class VictrolaEventListener:
                     headers={"Content-Type": "application/json"},
                     timeout=aiohttp.ClientTimeout(total=5),
                 )
-        except Exception:
-            pass
+        except (aiohttp.ClientError, TimeoutError, OSError):
+            pass  # Best-effort cleanup; device may already be unreachable
 
     # ── Event handlers ───────────────────────────────────────────────────
 
