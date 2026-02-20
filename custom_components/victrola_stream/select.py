@@ -11,6 +11,7 @@ from .const import (
     DOMAIN, SOURCES,
     AUDIO_QUALITY_OPTIONS, AUDIO_QUALITY_LABEL_TO_API,
     AUDIO_LATENCY_OPTIONS, AUDIO_LATENCY_LABEL_TO_API,
+    RCA_MODE_OPTIONS, RCA_MODE_LABEL_TO_API, RCA_MODE_API_TO_LABEL,
     SOURCE_TO_DEFAULT_TYPE, SOURCE_TO_QUICKPLAY_TYPE,
     SOURCE_ROON, SOURCE_SONOS, SOURCE_UPNP, SOURCE_BLUETOOTH,
     VICTROLA_TYPE_SONOS_QUICKPLAY,
@@ -27,6 +28,7 @@ async def async_setup_entry(
         VictrolaAudioSourceSelect(data, entry),
         VictrolaAudioQualitySelect(data, entry),
         VictrolaAudioLatencySelect(data, entry),
+        VictrolaRCAModeSelect(data, entry),
         VictrolaUnifiedQuickPlaySelect(data, entry),  # ONE unified select from live list
     ]
     # Default Output selects remain per-source (different semantics) - Bluetooth last
@@ -148,6 +150,26 @@ class VictrolaAudioLatencySelect(VictrolaBaseSelect):
         api_value = AUDIO_LATENCY_LABEL_TO_API.get(option)
         if api_value and await self._api.async_set_audio_latency(api_value):
             self._state_store.set_audio_latency(option)
+            self.async_write_ha_state()
+
+
+class VictrolaRCAModeSelect(VictrolaBaseSelect):
+    _attr_name    = "RCA Mode"
+    _attr_icon    = "mdi:audio-video"
+    _attr_options = RCA_MODE_OPTIONS
+
+    def __init__(self, data, entry):
+        super().__init__(data, entry)
+        self._attr_unique_id = f"{entry.entry_id}_rca_mode"
+
+    @property
+    def current_option(self) -> str | None:
+        return self._state_store.rca_mode
+
+    async def async_select_option(self, option: str) -> None:
+        api_value = RCA_MODE_LABEL_TO_API.get(option)
+        if api_value and await self._api.async_set_rca_mode(api_value):
+            self._state_store.set_rca_mode(option)
             self.async_write_ha_state()
 
 

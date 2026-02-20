@@ -121,6 +121,34 @@ class VictrolaAPI:
         )
 
     # ─────────────────────────────────────────────
+    # RCA Settings
+    # ─────────────────────────────────────────────
+
+    async def async_set_rca_mode(self, mode: str) -> bool:
+        """Set RCA mode. mode: switching / simultaneous"""
+        return await self.async_set_data(
+            "settings:/adchls/dacMode",
+            "value",
+            {"type": "adchlsDACMode", "adchlsDACMode": mode},
+        )
+
+    async def async_set_rca_delay(self, delay_ms: int) -> bool:
+        """Set RCA delay in milliseconds (0-500)."""
+        return await self.async_set_data(
+            "settings:/adchls/dacDelay",
+            "value",
+            {"type": "i32_", "i32_": max(0, min(500, int(delay_ms)))},
+        )
+
+    async def async_set_rca_fixed_volume(self, enabled: bool) -> bool:
+        """Set RCA fixed volume (volume control enabled/disabled)."""
+        return await self.async_set_data(
+            "settings:/adchls/fixedVolume",
+            "value",
+            {"type": "bool_", "bool_": enabled},
+        )
+
+    # ─────────────────────────────────────────────
     # Knob Brightness
     # path: settings:/victrola/lightBrightness
     # value: {"type": "i32_", "i32_": 0-100}

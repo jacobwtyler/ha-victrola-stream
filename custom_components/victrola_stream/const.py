@@ -67,6 +67,9 @@ PATH_VOLUME              = "player:volume"
 PATH_MUTE                = "settings:/mediaPlayer/mute"
 PATH_POWER_TARGET        = "powermanager:target"
 PATH_UI                  = "ui:"
+PATH_RCA_MODE            = "settings:/adchls/dacMode"
+PATH_RCA_DELAY           = "settings:/adchls/dacDelay"
+PATH_RCA_FIXED_VOLUME    = "settings:/adchls/fixedVolume"
 
 # ─────────────────────────────────────────────
 # Event queue subscription paths
@@ -113,6 +116,20 @@ AUDIO_LATENCY_LABEL_TO_API = {
     "Max":    "max",
 }
 AUDIO_LATENCY_API_TO_LABEL = {v: k for k, v in AUDIO_LATENCY_LABEL_TO_API.items()}
+
+# ─────────────────────────────────────────────
+# RCA Settings
+# ─────────────────────────────────────────────
+RCA_MODE_OPTIONS = ["Switching", "Simultaneous"]
+RCA_MODE_LABEL_TO_API = {
+    "Switching": "switching",
+    "Simultaneous": "simultaneous",
+}
+RCA_MODE_API_TO_LABEL = {v: k for k, v in RCA_MODE_LABEL_TO_API.items()}
+
+RCA_DELAY_MIN = 0
+RCA_DELAY_MAX = 500  # Observed max in testing
+RCA_DELAY_STEP = 1
 
 # ─────────────────────────────────────────────
 # Knob brightness

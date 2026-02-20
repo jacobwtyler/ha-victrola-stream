@@ -1,6 +1,10 @@
 """Internal state store - all values polled from device."""
 from __future__ import annotations
-from .const import AUDIO_QUALITY_OPTIONS, AUDIO_LATENCY_OPTIONS, BRIGHTNESS_MIN, BRIGHTNESS_MAX
+from .const import (
+    AUDIO_QUALITY_OPTIONS, AUDIO_LATENCY_OPTIONS, 
+    RCA_MODE_OPTIONS, RCA_DELAY_MIN, RCA_DELAY_MAX,
+    BRIGHTNESS_MIN, BRIGHTNESS_MAX
+)
 
 
 class VictrolaStateStore:
@@ -22,6 +26,9 @@ class VictrolaStateStore:
         # Settings
         self.audio_quality: str = "Standard"
         self.audio_latency: str = "Medium"
+        self.rca_mode: str = "Switching"
+        self.rca_delay: int = 0
+        self.rca_fixed_volume: bool = False
         self.knob_brightness: int = 100
         self.autoplay: bool = True
         self.volume: int | None = None
@@ -53,6 +60,16 @@ class VictrolaStateStore:
         if label in AUDIO_LATENCY_OPTIONS:
             self.audio_latency = label
 
+    def set_rca_mode(self, mode: str):
+        if mode in RCA_MODE_OPTIONS:
+            self.rca_mode = mode
+
+    def set_rca_delay(self, delay_ms: int):
+        self.rca_delay = max(RCA_DELAY_MIN, min(RCA_DELAY_MAX, delay_ms))
+
+    def set_rca_fixed_volume(self, enabled: bool):
+        self.rca_fixed_volume = enabled
+
     def set_knob_brightness(self, value: int):
         self.knob_brightness = max(BRIGHTNESS_MIN, min(BRIGHTNESS_MAX, value))
 
@@ -69,6 +86,9 @@ class VictrolaStateStore:
             "default_outputs": self.default_outputs,
             "audio_quality": self.audio_quality,
             "audio_latency": self.audio_latency,
+            "rca_mode": self.rca_mode,
+            "rca_delay": self.rca_delay,
+            "rca_fixed_volume": self.rca_fixed_volume,
             "knob_brightness": self.knob_brightness,
             "autoplay": self.autoplay,
             "volume": self.volume,
