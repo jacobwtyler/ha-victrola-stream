@@ -66,22 +66,45 @@ class VictrolaAudioSourceSelect(VictrolaBaseSelect):
         return self._state_store.current_source
 
     async def async_select_option(self, option: str) -> None:
-        """Switch to a new source - disable all others first."""
+        """Switch to a new source - disable all others with verification."""
         _LOGGER.info("Switching audio source to: %s", option)
         
-        # Disable ALL sources first to avoid conflicts
+        # Disable ALL sources first (aggressively)
         for source in SOURCES:
             if source != option:
                 await self._api.async_set_source_enabled(source.lower(), False)
                 self._state_store.set_source_enabled(source, False)
+        
+        # Wait for device to process disables
+        await asyncio.sleep(1.0)
         
         # Enable the selected source
         await self._api.async_set_source_enabled(option.lower(), True)
         self._state_store.set_source_enabled(option, True)
         self._state_store.current_source = option
         
-        # Wait a moment for device to stabilize
-        await asyncio.sleep(0.5)
+        # Wait for device to stabilize
+        await asyncio.sleep(1.0)
+        
+        # VERIFY: Check device state to ensure only one source enabled
+        device_state = await self.coordinator.async_get_device_state()
+        enabled = []
+        for src in SOURCES:
+            key = f"{src.lower()}_enabled"
+            if device_state.get(key):
+                enabled.append(src)
+        
+        if len(enabled) > 1:
+            _LOGGER.warning(
+                "Device has multiple sources enabled after switch: %s (wanted: %s). "
+                "This is a Victrola firmware bug - attempting to force disable...",
+                enabled, option
+            )
+            # Force disable again
+            for src in enabled:
+                if src != option:
+                    await self._api.async_set_source_enabled(src.lower(), False)
+                    await asyncio.sleep(0.5)
         
         _LOGGER.info("Source changed to %s successfully", option)
         self.async_write_ha_state()

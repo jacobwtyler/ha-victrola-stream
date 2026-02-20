@@ -166,7 +166,15 @@ class VictrolaKnobBrightnessSensor(VictrolaBaseSensor):
 
     @property
     def native_value(self):
-        return self._state_store.knob_brightness
+        """Return numeric brightness value without % symbol."""
+        value = self._state_store.knob_brightness
+        if value:
+            # Strip % symbol and convert to int (e.g., "27%" → 27)
+            try:
+                return int(value.replace("%", "").strip())
+            except (ValueError, AttributeError):
+                return None
+        return None
 
 
 class VictrolaPowerStateSensor(VictrolaBaseSensor):

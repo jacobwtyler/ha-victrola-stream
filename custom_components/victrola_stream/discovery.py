@@ -138,17 +138,35 @@ class VictrolaDiscovery:
                       list(self._speakers[source].keys()))
 
     async def _update_quickplay(self) -> None:
-        """Update QuickPlay speaker list (from speakerQuickplay)."""
+        """Update QuickPlay speaker list (from speakerQuickplay) with source labels."""
         qp_state = await self._api.async_get_quickplay_state()
         if qp_state.get("speakers"):
             self._quickplay_speakers = {}
             for spk in qp_state["speakers"]:
                 name = spk.get("name")
+                spk_type = spk.get("type", "")
+                
+                # Determine source from type
+                if "Sonos" in spk_type:
+                    source = SOURCE_SONOS
+                elif "Roon" in spk_type:
+                    source = SOURCE_ROON
+                elif "UPnP" in spk_type:
+                    source = SOURCE_UPNP
+                elif "Bluetooth" in spk_type:
+                    source = SOURCE_BLUETOOTH
+                else:
+                    source = "Unknown"
+                
                 if name:
-                    self._quickplay_speakers[name] = {
+                    # Add source label to name for clarity
+                    display_name = f"{name} ({source})"
+                    self._quickplay_speakers[display_name] = {
                         "id": spk.get("id"),
                         "path": spk.get("path"),
-                        "type": spk.get("type"),
+                        "type": spk_type,
+                        "source": source,
+                        "original_name": name,
                         "preferred": spk.get("preferred", False),
                     }
 

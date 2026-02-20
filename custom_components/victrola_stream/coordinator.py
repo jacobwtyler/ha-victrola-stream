@@ -41,6 +41,8 @@ class VictrolaCoordinator(DataUpdateCoordinator):
             qp_state = await self.api.async_get_quickplay_state()
             if qp_state.get("speakers"):
                 self.state_store.available_quickplay_speakers = qp_state["speakers"]
+                # Update discovery QuickPlay cache with source labels
+                await self.discovery._update_quickplay()
             if qp_state.get("current_quickplay_name"):
                 self.state_store.set_quickplay(
                     SOURCE_SONOS,
