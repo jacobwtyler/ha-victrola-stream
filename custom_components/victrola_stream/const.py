@@ -25,7 +25,7 @@ SOURCES = [SOURCE_ROON, SOURCE_SONOS, SOURCE_UPNP, SOURCE_BLUETOOTH]
 # ─────────────────────────────────────────────
 VICTROLA_TYPE_ROON_DEFAULT      = "victrolaOutputRoon"
 VICTROLA_TYPE_SONOS_DEFAULT     = "victrolaOutputSonos"
-VICTROLA_TYPE_UPNP_DEFAULT      = "victrolaOutputUpnp"
+VICTROLA_TYPE_UPNP_DEFAULT      = "victrolaOutputUPnP"
 VICTROLA_TYPE_BLUETOOTH_DEFAULT = "victrolaOutputBluetooth"
 
 VICTROLA_TYPE_ROON_QUICKPLAY      = "victrolaQuickplayRoon"

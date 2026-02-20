@@ -219,6 +219,10 @@ class VictrolaDiscovery:
         """Get sorted QuickPlay speaker names."""
         return sorted(self._quickplay_speakers.keys())
 
+    def get_quickplay_speaker(self, name: str) -> dict | None:
+        """Get full QuickPlay speaker info by name."""
+        return self._quickplay_speakers.get(name)
+
     def get_quickplay_id(self, name: str) -> str | None:
         """Get Victrola ID for a QuickPlay speaker by name."""
         entry = self._quickplay_speakers.get(name)

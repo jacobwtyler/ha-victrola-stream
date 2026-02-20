@@ -87,7 +87,7 @@ class VictrolaAudioSourceSelect(VictrolaBaseSelect):
         await asyncio.sleep(1.0)
         
         # VERIFY: Check device state to ensure only one source enabled
-        device_state = await self.coordinator.async_get_device_state()
+        device_state = await self._api.async_get_current_default_outputs()
         enabled = []
         for src in SOURCES:
             key = f"{src.lower()}_enabled"
@@ -177,15 +177,22 @@ class VictrolaUnifiedQuickPlaySelect(VictrolaBaseSelect):
 
     async def async_select_option(self, option: str) -> None:
         """Send quickplay to selected speaker - starts audio immediately."""
-        speaker_id = self._discovery.get_quickplay_id(option)
-        if not speaker_id:
-            _LOGGER.error("No ID found for quickplay speaker: %s", option)
+        # Get speaker info including source
+        speaker_info = self._discovery.get_quickplay_speaker(option)
+        if not speaker_info:
+            _LOGGER.error("No info found for quickplay speaker: %s", option)
             return
-
-        _LOGGER.info("QuickPlay → %s (%s)", option, speaker_id)
-        success = await self._api.async_quickplay(VICTROLA_TYPE_SONOS_QUICKPLAY, speaker_id)
+        
+        speaker_id = speaker_info.get("id")
+        source = speaker_info.get("source", SOURCE_SONOS)
+        
+        # Map source to correct QuickPlay type
+        quickplay_type = SOURCE_TO_QUICKPLAY_TYPE.get(source, VICTROLA_TYPE_SONOS_QUICKPLAY)
+        
+        _LOGGER.info("QuickPlay → %s (%s) [%s]", option, speaker_id, quickplay_type)
+        success = await self._api.async_quickplay(quickplay_type, speaker_id)
         if success:
-            self._state_store.set_quickplay(SOURCE_SONOS, option, speaker_id)
+            self._state_store.set_quickplay(source, option, speaker_id)
             self.async_write_ha_state()
             await self.coordinator.async_request_refresh()
         else:
