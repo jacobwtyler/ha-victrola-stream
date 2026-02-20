@@ -90,4 +90,4 @@ class VictrolaRCADelayNumber(CoordinatorEntity, NumberEntity):
             self._state_store.set_rca_delay(int(value))
             self.async_write_ha_state()
         else:
-            _LOGGER.error("Failed to set knob brightness: %s", value)
+            _LOGGER.error("Failed to set RCA delay: %s", value)

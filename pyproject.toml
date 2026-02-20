@@ -1,0 +1,9 @@
+[project]
+name = "ha-victrola-stream"
+version = "2.9.0"
+description = "Home Assistant integration for Victrola Stream turntables"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
