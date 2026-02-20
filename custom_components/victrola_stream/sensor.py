@@ -166,8 +166,20 @@ class VictrolaKnobBrightnessSensor(VictrolaBaseSensor):
 
     @property
     def native_value(self) -> int | None:
-        """Return numeric brightness value (0-100)."""
-        return self._state_store.knob_brightness
+        """Return numeric brightness value (0-100).
+
+        Handles both int values (from i32_ API) and legacy string
+        values like '42%' from older firmware.
+        """
+        value = self._state_store.knob_brightness
+        if isinstance(value, (int, float)):
+            return int(value)
+        if isinstance(value, str):
+            try:
+                return int(value.replace("%", "").strip())
+            except (ValueError, TypeError):
+                return None
+        return None
 
 
 class VictrolaPowerStateSensor(VictrolaBaseSensor):

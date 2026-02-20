@@ -1,4 +1,4 @@
-"""Switch platform - RCA Fixed Volume toggle."""
+"""Switch platform - RCA Volume Control toggle."""
 from __future__ import annotations
 import logging
 from homeassistant.components.switch import SwitchEntity
@@ -13,15 +13,19 @@ _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
     data = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([VictrolaRCAFixedVolumeSwitch(data, entry)])
+    async_add_entities([VictrolaRCAVolumeControlSwitch(data, entry)])
 
 
-class VictrolaRCAFixedVolumeSwitch(CoordinatorEntity, SwitchEntity):
-    """RCA Fixed Volume toggle (disables volume control)."""
+class VictrolaRCAVolumeControlSwitch(CoordinatorEntity, SwitchEntity):
+    """RCA Volume Control toggle (matches Victrola UI).
+
+    ON = volume control enabled (fixedVolume=False on device)
+    OFF = fixed volume / volume control disabled (fixedVolume=True on device)
+    """
 
     _attr_has_entity_name = True
-    _attr_name = "RCA Fixed Volume"
-    _attr_icon = "mdi:volume-off"
+    _attr_name = "RCA Volume Control"
+    _attr_icon = "mdi:volume-high"
 
     def __init__(self, data: dict, entry: ConfigEntry):
         super().__init__(data["coordinator"])
@@ -35,18 +39,18 @@ class VictrolaRCAFixedVolumeSwitch(CoordinatorEntity, SwitchEntity):
 
     @property
     def is_on(self) -> bool:
-        return self._state_store.rca_fixed_volume
+        return not self._state_store.rca_fixed_volume
 
     async def async_turn_on(self) -> None:
-        """Enable fixed volume (disable volume control)."""
-        success = await self._api.async_set_rca_fixed_volume(True)
-        if success:
-            self._state_store.set_rca_fixed_volume(True)
-            self.async_write_ha_state()
-
-    async def async_turn_off(self) -> None:
-        """Disable fixed volume (enable volume control)."""
+        """Enable volume control (disable fixed volume)."""
         success = await self._api.async_set_rca_fixed_volume(False)
         if success:
             self._state_store.set_rca_fixed_volume(False)
+            self.async_write_ha_state()
+
+    async def async_turn_off(self) -> None:
+        """Disable volume control (enable fixed volume)."""
+        success = await self._api.async_set_rca_fixed_volume(True)
+        if success:
+            self._state_store.set_rca_fixed_volume(True)
             self.async_write_ha_state()
