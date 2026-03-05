@@ -12,7 +12,8 @@
       }
     },
     "error": {
-      "cannot_connect": "Failed to connect. Check the IP address and ensure the device is on."
+      "cannot_connect": "Failed to connect. Check the IP address and ensure the device is on.",
+      "unknown": "An unexpected error occurred. Check the logs for details."
     },
     "abort": {
       "already_configured": "This Victrola Stream device is already configured."

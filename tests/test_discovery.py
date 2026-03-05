@@ -84,6 +84,43 @@ class TestDiscoveryWithData:
         assert discovery.find_speaker_name_by_id("r1") == "Roon Core"
 
 
+class TestEnableSource:
+    """Test that _enable_source disables other sources and enables the target."""
+
+    @pytest.mark.asyncio
+    async def test_enable_source_disables_others(self, discovery):
+        """Enabling Sonos should disable Roon, UPnP, Bluetooth and enable Sonos."""
+        await discovery._enable_source(SOURCE_SONOS)
+
+        calls = discovery._api.async_set_source_enabled.call_args_list
+        # Should have 4 calls: 3 disables + 1 enable
+        assert len(calls) == 4
+
+        # First 3 calls should be disables (order: Roon, UPnP, Bluetooth since Sonos is skipped)
+        disable_calls = [(c[0][0], c[0][1]) for c in calls[:3]]
+        assert ("roon", False) in disable_calls
+        assert ("upnp", False) in disable_calls
+        assert ("bluetooth", False) in disable_calls
+
+        # Last call should enable Sonos
+        assert calls[3][0] == ("sonos", True)
+
+    @pytest.mark.asyncio
+    async def test_enable_source_roon(self, discovery):
+        """Enabling Roon should disable Sonos, UPnP, Bluetooth."""
+        await discovery._enable_source(SOURCE_ROON)
+
+        calls = discovery._api.async_set_source_enabled.call_args_list
+        assert len(calls) == 4
+
+        disable_calls = [(c[0][0], c[0][1]) for c in calls[:3]]
+        assert ("sonos", False) in disable_calls
+        assert ("upnp", False) in disable_calls
+        assert ("bluetooth", False) in disable_calls
+
+        assert calls[3][0] == ("roon", True)
+
+
 class TestUpdateFromQuickplay:
     """Test the update_from_quickplay method (used by event listener)."""
 

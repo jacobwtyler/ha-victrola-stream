@@ -5,6 +5,7 @@ from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -19,7 +20,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     ])
 
 
-class VictrolaRebootButton(ButtonEntity):
+class VictrolaRebootButton(CoordinatorEntity, ButtonEntity):
     """Reboot the Victrola device."""
 
     _attr_has_entity_name = True
@@ -27,8 +28,8 @@ class VictrolaRebootButton(ButtonEntity):
     _attr_icon = "mdi:restart"
 
     def __init__(self, data: dict, entry: ConfigEntry):
+        super().__init__(data["coordinator"])
         self._api = data["api"]
-        self._coordinator = data["coordinator"]
         self._attr_unique_id = f"{entry.entry_id}_reboot"
 
     @property
@@ -45,7 +46,7 @@ class VictrolaRebootButton(ButtonEntity):
             _LOGGER.error("Reboot command failed")
 
 
-class VictrolaRefreshButton(ButtonEntity):
+class VictrolaRefreshButton(CoordinatorEntity, ButtonEntity):
     """Force a state refresh."""
 
     _attr_has_entity_name = True
@@ -53,8 +54,8 @@ class VictrolaRefreshButton(ButtonEntity):
     _attr_icon = "mdi:refresh"
 
     def __init__(self, data: dict, entry: ConfigEntry):
+        super().__init__(data["coordinator"])
         self._api = data["api"]
-        self._coordinator = data["coordinator"]
         self._attr_unique_id = f"{entry.entry_id}_refresh"
 
     @property
@@ -62,11 +63,11 @@ class VictrolaRefreshButton(ButtonEntity):
         return {"identifiers": {(DOMAIN, self._api.host)}}
 
     async def async_press(self) -> None:
-        await self._coordinator.async_request_refresh()
+        await self.coordinator.async_request_refresh()
         _LOGGER.info("State refresh requested")
 
 
-class VictrolaRediscoverButton(ButtonEntity):
+class VictrolaRediscoverButton(CoordinatorEntity, ButtonEntity):
     """Rediscover speakers for the currently active source."""
 
     _attr_has_entity_name = True
@@ -74,9 +75,9 @@ class VictrolaRediscoverButton(ButtonEntity):
     _attr_icon = "mdi:speaker-multiple"
 
     def __init__(self, data: dict, entry: ConfigEntry):
+        super().__init__(data["coordinator"])
         self._api = data["api"]
         self._discovery = data["discovery"]
-        self._coordinator = data["coordinator"]
         self._state_store = data["state_store"]
         self._attr_unique_id = f"{entry.entry_id}_rediscover"
 
@@ -95,5 +96,5 @@ class VictrolaRediscoverButton(ButtonEntity):
         await self._discovery._discover_source(current)
         if current in ["Sonos", "Roon"]:
             await self._discovery._update_quickplay()
-        await self._coordinator.async_request_refresh()
+        await self.coordinator.async_request_refresh()
         _LOGGER.info("%s speaker rediscovery complete", current)

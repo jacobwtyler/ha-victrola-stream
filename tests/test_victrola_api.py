@@ -22,6 +22,15 @@ class TestVictrolaAPIInit:
         assert api.port == 8080
         assert api.base_url == "http://10.0.0.1:8080"
 
+    def test_session_none_by_default(self):
+        api = VictrolaAPI("10.0.0.1")
+        assert api.session is None
+
+    def test_session_stored_when_provided(self):
+        mock_session = MagicMock()
+        api = VictrolaAPI("10.0.0.1", session=mock_session)
+        assert api.session is mock_session
+
 
 class TestSetDataPayloads:
     """Test that API methods build correct payloads."""
@@ -164,6 +173,35 @@ class TestSetDataPayloads:
         )
         assert result is True
         assert api.async_set_data.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_select_speaker_both_succeed(self, api):
+        """When both calls succeed, result is True (and logic)."""
+        api.async_set_data = AsyncMock(return_value=True)
+        result = await api.async_select_speaker(
+            "victrolaOutputSonos", "victrolaQuickplaySonos", "spk-123"
+        )
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_select_speaker_first_fails(self, api):
+        """When set_default_output fails, result is False (and logic)."""
+        api.async_set_default_output = AsyncMock(return_value=False)
+        api.async_quickplay = AsyncMock(return_value=True)
+        result = await api.async_select_speaker(
+            "victrolaOutputSonos", "victrolaQuickplaySonos", "spk-123"
+        )
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_select_speaker_second_fails(self, api):
+        """When quickplay fails, result is False (and logic)."""
+        api.async_set_default_output = AsyncMock(return_value=True)
+        api.async_quickplay = AsyncMock(return_value=False)
+        result = await api.async_select_speaker(
+            "victrolaOutputSonos", "victrolaQuickplaySonos", "spk-123"
+        )
+        assert result is False
 
     @pytest.mark.asyncio
     async def test_reboot(self, api):

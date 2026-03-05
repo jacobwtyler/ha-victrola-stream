@@ -5,6 +5,7 @@ import aiohttp
 import logging
 import time
 from typing import Any
+from urllib.parse import quote
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -12,10 +13,16 @@ _LOGGER = logging.getLogger(__name__)
 class VictrolaAPI:
     """Interface to Victrola Stream API."""
 
-    def __init__(self, host: str, port: int = 80):
+    def __init__(self, host: str, port: int = 80, session: aiohttp.ClientSession | None = None):
         self.host = host
         self.port = port
         self.base_url = f"http://{host}:{port}"
+        self._session = session
+
+    @property
+    def session(self) -> aiohttp.ClientSession | None:
+        """Expose the shared session for use by other components."""
+        return self._session
 
     # ─────────────────────────────────────────────
     # Core
@@ -24,13 +31,18 @@ class VictrolaAPI:
     async def async_test_connection(self) -> bool:
         """Test connection."""
         try:
-            async with aiohttp.ClientSession() as session:
+            own_session = self._session is None
+            session = self._session or aiohttp.ClientSession()
+            try:
                 async with session.post(
                     f"{self.base_url}/api/getData",
                     json={"path": "settings:/", "roles": ["value"]},
                     timeout=aiohttp.ClientTimeout(total=5),
                 ) as response:
                     return response.status == 200
+            finally:
+                if own_session:
+                    await session.close()
         except (aiohttp.ClientError, TimeoutError, OSError) as err:
             _LOGGER.error("Connection test failed: %s", err)
             return False
@@ -48,7 +60,9 @@ class VictrolaAPI:
             if role == "activate":
                 payload["_nocache"] = int(time.time())
 
-            async with aiohttp.ClientSession() as session:
+            own_session = self._session is None
+            session = self._session or aiohttp.ClientSession()
+            try:
                 async with session.post(
                     f"{self.base_url}/api/setData",
                     json=payload,
@@ -62,6 +76,9 @@ class VictrolaAPI:
                         body = await response.text()
                         _LOGGER.warning("setData failed %s HTTP %s: %s", path, response.status, body)
                     return ok
+            finally:
+                if own_session:
+                    await session.close()
         except (aiohttp.ClientError, TimeoutError, OSError) as err:
             _LOGGER.error("setData error %s: %s", path, err)
             return False
@@ -90,7 +107,7 @@ class VictrolaAPI:
         """Set default output AND quickplay."""
         r1 = await self.async_set_default_output(victrola_default_type, speaker_id)
         r2 = await self.async_quickplay(victrola_quickplay_type, speaker_id)
-        return r1 or r2
+        return r1 and r2
 
     # ─────────────────────────────────────────────
     # Audio Quality
@@ -201,71 +218,6 @@ class VictrolaAPI:
     # path: powermanager:goReboot
     # ─────────────────────────────────────────────
 
-    # ─────────────────────────────────────────────
-    # Full state poll (all paths confirmed readable)
-    # ─────────────────────────────────────────────
-
-    async def async_get_full_state(self) -> dict:
-        """Poll all readable settings from the device."""
-        state = {}
-
-        try:
-            async with aiohttp.ClientSession() as session:
-
-                async def _get(path: str) -> list | None:
-                    try:
-                        async with session.post(
-                            f"{self.base_url}/api/getData",
-                            json={"path": path, "roles": ["value"]},
-                            headers={"Content-Type": "application/json"},
-                            timeout=aiohttp.ClientTimeout(total=5),
-                        ) as r:
-                            if r.status == 200:
-                                data = await r.json(content_type=None)
-                                if isinstance(data, list) and data and data[0] is not None:
-                                    return data[0]
-                    except (aiohttp.ClientError, TimeoutError, OSError) as e:
-                        _LOGGER.debug("getData %s failed: %s", path, e)
-                    return None
-
-                # Audio quality -> {"forceLowBitrate": "losslessQuality", "type": "forceLowBitrate"}
-                d = await _get("settings:/victrola/forceLowBitrate")
-                if d:
-                    state["audio_quality_api"] = d.get("forceLowBitrate")
-
-                # Audio latency -> {"adchlsLatency": "med", "type": "adchlsLatency"}
-                d = await _get("settings:/victrola/wirelessAudioDelay")
-                if d:
-                    state["audio_latency_api"] = d.get("adchlsLatency")
-
-                # Knob brightness -> {"type": "i32_", "i32_": 50}
-                d = await _get("settings:/victrola/lightBrightness")
-                if d:
-                    state["knob_brightness"] = int(d.get("i32_", 100))
-
-                # Source enabled states -> {"bool_": True, "type": "bool_"}
-                for source, path in [
-                    ("roon",      "settings:/victrola/roonEnabled"),
-                    ("sonos",     "settings:/victrola/sonosEnabled"),
-                    ("upnp",      "settings:/victrola/upnpEnabled"),
-                    ("bluetooth", "settings:/victrola/bluetoothEnabled"),
-                ]:
-                    d = await _get(path)
-                    if d:
-                        state[f"{source}_enabled"] = bool(d.get("bool_", False))
-
-                # Autoplay
-                d = await _get("settings:/victrola/autoplay")
-                if d:
-                    state["autoplay"] = bool(d.get("bool_", True))
-
-        except (aiohttp.ClientError, TimeoutError, OSError) as err:
-            _LOGGER.error("get_full_state error: %s", err)
-
-        return state
-
-
-
     async def async_get_ui_state(self) -> dict:
         """Fetch ui: getRows - returns current default speaker name and UI structure.
         
@@ -276,29 +228,28 @@ class VictrolaAPI:
         Row 4: victrola:ui/speakerQuickplay container
         """
         try:
-            from urllib.parse import quote
-            url = f"{self.base_url}/api/getRows?path={quote('ui:')}&roles=%40all&from=0&to=30&type=structure&_nocache={int(__import__('time').time()*1000)}"
-            async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    url,
-                    timeout=aiohttp.ClientTimeout(total=10),
-                ) as r:
-                    if r.status == 200:
-                        data = await r.json(content_type=None)
-                        rows = data.get("rows", [])
-                        result = {}
-                        for row in rows:
-                            if isinstance(row, dict):
-                                path = row.get("path", "")
-                                title = row.get("title")
-                                if path == "victrola:ui/speakerSelection" and title:
-                                    result["current_default_speaker_name"] = title
-                                    _LOGGER.debug("Current default speaker from ui:: %s", title)
-                                if path == "settings:/victrola/autoplay":
-                                    val = row.get("value", {})
-                                    if val:
-                                        result["autoplay"] = val.get("bool_")
-                        return result
+            url = f"{self.base_url}/api/getRows?path={quote('ui:')}&roles=%40all&from=0&to=30&type=structure&_nocache={int(time.time()*1000)}"
+            session = self._session
+            async with session.get(
+                url,
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                if r.status == 200:
+                    data = await r.json(content_type=None)
+                    rows = data.get("rows", [])
+                    result = {}
+                    for row in rows:
+                        if isinstance(row, dict):
+                            path = row.get("path", "")
+                            title = row.get("title")
+                            if path == "victrola:ui/speakerSelection" and title:
+                                result["current_default_speaker_name"] = title
+                                _LOGGER.debug("Current default speaker from ui:: %s", title)
+                            if path == "settings:/victrola/autoplay":
+                                val = row.get("value", {})
+                                if val:
+                                    result["autoplay"] = val.get("bool_")
+                    return result
         except (aiohttp.ClientError, TimeoutError, OSError) as err:
             _LOGGER.error("ui: getRows error: %s", err)
         return {}
@@ -310,13 +261,12 @@ class VictrolaAPI:
         Each row has: type, path, id, title, preferred (bool), value (sonosGroup details)
         """
         try:
-            from urllib.parse import quote
-            url = f"{self.base_url}/api/getRows?path={quote('victrola:ui/speakerQuickplay')}&roles=%40all&from=0&to=65535&type=structure&_nocache={int(__import__('time').time()*1000)}"
-            async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    url,
-                    timeout=aiohttp.ClientTimeout(total=10),
-                ) as r:
+            url = f"{self.base_url}/api/getRows?path={quote('victrola:ui/speakerQuickplay')}&roles=%40all&from=0&to=65535&type=structure&_nocache={int(time.time()*1000)}"
+            session = self._session
+            async with session.get(
+                url,
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
                     if r.status == 200:
                         data = await r.json(content_type=None)
                         rows = data.get("rows", [])
@@ -358,26 +308,25 @@ class VictrolaAPI:
         """Fetch player volume and power state."""
         result = {}
         try:
-            from urllib.parse import quote
-            async with aiohttp.ClientSession() as session:
-                # Volume
-                url = f"{self.base_url}/api/getData?path={quote('player:volume')}&roles=%40all&type=structure&_nocache={int(__import__('time').time()*1000)}"
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as r:
-                    if r.status == 200:
-                        data = await r.json(content_type=None)
-                        val = data.get("value", {})
-                        if val and val.get("type") == "i32_":
-                            result["volume"] = val.get("i32_")
-                # Power state
-                url2 = f"{self.base_url}/api/getData?path={quote('powermanager:target')}&roles=%40all&type=structure&_nocache={int(__import__('time').time()*1000)}"
-                async with session.get(url2, timeout=aiohttp.ClientTimeout(total=5)) as r:
-                    if r.status == 200:
-                        data = await r.json(content_type=None)
-                        val = data.get("value", {})
-                        if val and val.get("type") == "powerTarget":
-                            pt = val.get("powerTarget", {})
-                            result["power_target"] = pt.get("target")
-                            result["power_reason"] = pt.get("reason")
+            session = self._session
+            # Volume
+            url = f"{self.base_url}/api/getData?path={quote('player:volume')}&roles=%40all&type=structure&_nocache={int(time.time()*1000)}"
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as r:
+                if r.status == 200:
+                    data = await r.json(content_type=None)
+                    val = data.get("value", {})
+                    if val and val.get("type") == "i32_":
+                        result["volume"] = val.get("i32_")
+            # Power state
+            url2 = f"{self.base_url}/api/getData?path={quote('powermanager:target')}&roles=%40all&type=structure&_nocache={int(time.time()*1000)}"
+            async with session.get(url2, timeout=aiohttp.ClientTimeout(total=5)) as r:
+                if r.status == 200:
+                    data = await r.json(content_type=None)
+                    val = data.get("value", {})
+                    if val and val.get("type") == "powerTarget":
+                        pt = val.get("powerTarget", {})
+                        result["power_target"] = pt.get("target")
+                        result["power_reason"] = pt.get("reason")
         except (aiohttp.ClientError, TimeoutError, OSError) as err:
             _LOGGER.error("player state error: %s", err)
         return result
@@ -385,16 +334,16 @@ class VictrolaAPI:
     async def async_get_rows(self, path: str, from_idx: int, to_idx: int) -> list:
         """Fetch getRows from device."""
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    f"{self.base_url}/api/getRows",
-                    json={"path": path, "roles": ["value"], "from": from_idx, "to": to_idx},
-                    headers={"Content-Type": "application/json"},
-                    timeout=aiohttp.ClientTimeout(total=10),
-                ) as r:
-                    if r.status == 200:
-                        data = await r.json(content_type=None)
-                        return data.get("rows", [])
+            session = self._session
+            async with session.post(
+                f"{self.base_url}/api/getRows",
+                json={"path": path, "roles": ["value"], "from": from_idx, "to": to_idx},
+                headers={"Content-Type": "application/json"},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                if r.status == 200:
+                    data = await r.json(content_type=None)
+                    return data.get("rows", [])
         except (aiohttp.ClientError, TimeoutError, OSError) as err:
             _LOGGER.error("getRows %s error: %s", path, err)
         return []
@@ -421,7 +370,7 @@ class VictrolaAPI:
           speakerSelection getRows:
           Row  4: currently selected/checked speaker slot (bool true)
         """
-        rows = await self.async_get_rows("settings:/victrola", 0, 18)
+        rows = await self.async_get_rows("settings:/victrola", 0, 19)
         result = {}
 
         def _str_val(row):
@@ -512,13 +461,12 @@ class VictrolaAPI:
         Types: victrolaOutputSonos, victrolaOutputRoon, victrolaOutputUPnP, victrolaOutputBluetooth
         """
         try:
-            from urllib.parse import quote
-            url = f"{self.base_url}/api/getRows?path={quote('victrola:ui/speakerSelection')}&roles=%40all&from=0&to=100&type=structure&_nocache={int(__import__('time').time()*1000)}"
-            async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    url,
-                    timeout=aiohttp.ClientTimeout(total=10),
-                ) as r:
+            url = f"{self.base_url}/api/getRows?path={quote('victrola:ui/speakerSelection')}&roles=%40all&from=0&to=100&type=structure&_nocache={int(time.time()*1000)}"
+            session = self._session
+            async with session.get(
+                url,
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
                     if r.status == 200:
                         data = await r.json(content_type=None)
                         rows = data.get("rows", [])
@@ -557,10 +505,9 @@ class VictrolaAPI:
     async def async_get_autoplay(self) -> bool | None:
         """Get current autoplay state."""
         try:
-            from urllib.parse import quote
-            url = f"{self.base_url}/api/getData?path={quote('settings:/victrola/autoplay')}&roles=value&type=structure&_nocache={int(__import__('time').time()*1000)}"
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as r:
+            url = f"{self.base_url}/api/getData?path={quote('settings:/victrola/autoplay')}&roles=value&type=structure&_nocache={int(time.time()*1000)}"
+            session = self._session
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as r:
                     if r.status == 200:
                         data = await r.json(content_type=None)
                         val = data.get("value", {})

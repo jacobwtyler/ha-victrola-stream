@@ -20,6 +20,7 @@ MOCK_MODULES = [
     "homeassistant.helpers.config_validation",
     "homeassistant.helpers.entity_platform",
     "homeassistant.helpers.update_coordinator",
+    "homeassistant.helpers.aiohttp_client",
 ]
 
 for mod_name in MOCK_MODULES:

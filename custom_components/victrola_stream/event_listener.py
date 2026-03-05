@@ -89,7 +89,11 @@ class VictrolaEventListener:
                 while self._running:
                     events = await self._poll()
                     if events:
-                        changed = await self._handle_events(events)
+                        try:
+                            changed = await self._handle_events(events)
+                        except Exception as err:
+                            _LOGGER.error("Unexpected error handling events: %s", err, exc_info=True)
+                            continue
                         if changed:
                             # Push updated state to HA immediately
                             self._coordinator.async_set_updated_data(
@@ -106,6 +110,10 @@ class VictrolaEventListener:
                 self._queue_id = None
                 delay = RECONNECT_DELAY * min(self._failures, MAX_FAILURES)
                 await asyncio.sleep(delay)
+            except Exception as err:
+                _LOGGER.error("Unexpected error in event listener: %s", err, exc_info=True)
+                self._queue_id = None
+                await asyncio.sleep(RECONNECT_DELAY)
 
     async def _subscribe(self, queue_id: str) -> None:
         """Register queue and subscribe to all event paths."""
@@ -113,35 +121,35 @@ class VictrolaEventListener:
         nocache = int(time.time() * 1000)
 
         # First create the queue
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                f"{base}/api/event/modifyQueue",
-                json={
-                    "queueId": "",
-                    "subscribe": [],
-                    "unsubscribe": [],
-                    "_nocache": str(nocache),
-                },
-                headers={"Content-Type": "application/json"},
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as r:
-                pass  # queue_id assigned by us, not device
+        session = self._api.session
+        async with session.post(
+            f"{base}/api/event/modifyQueue",
+            json={
+                "queueId": "",
+                "subscribe": [],
+                "unsubscribe": [],
+                "_nocache": str(nocache),
+            },
+            headers={"Content-Type": "application/json"},
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as r:
+            pass  # queue_id assigned by us, not device
 
-            # Now subscribe with our queue_id
-            nocache += 1
-            async with session.post(
-                f"{base}/api/event/modifyQueue",
-                json={
-                    "queueId": queue_id,
-                    "subscribe": EVENT_SUBSCRIPTIONS,
-                    "unsubscribe": [],
-                    "_nocache": str(nocache),
-                },
-                headers={"Content-Type": "application/json"},
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as r:
-                if r.status != 200:
-                    raise ConnectionError(f"modifyQueue failed: {r.status}")
+        # Now subscribe with our queue_id
+        nocache += 1
+        async with session.post(
+            f"{base}/api/event/modifyQueue",
+            json={
+                "queueId": queue_id,
+                "subscribe": EVENT_SUBSCRIPTIONS,
+                "unsubscribe": [],
+                "_nocache": str(nocache),
+            },
+            headers={"Content-Type": "application/json"},
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as r:
+            if r.status != 200:
+                raise ConnectionError(f"modifyQueue failed: {r.status}")
 
     async def _poll(self) -> list[dict]:
         """Long-poll the event queue. Returns list of changed items."""
@@ -155,18 +163,18 @@ class VictrolaEventListener:
             f"&_nocache={nocache}"
         )
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    url,
-                    timeout=aiohttp.ClientTimeout(total=POLL_TIMEOUT_MS / 1000 + 3),
-                ) as r:
-                    if r.status == 200:
-                        data = await r.json(content_type=None)
-                        return data if isinstance(data, list) else []
-                    elif r.status == 404:
-                        # Queue expired, need to re-subscribe
-                        self._queue_id = None
-                        raise ConnectionError("Queue expired (404)")
+            session = self._api.session
+            async with session.get(
+                url,
+                timeout=aiohttp.ClientTimeout(total=POLL_TIMEOUT_MS / 1000 + 3),
+            ) as r:
+                if r.status == 200:
+                    data = await r.json(content_type=None)
+                    return data if isinstance(data, list) else []
+                elif r.status == 404:
+                    # Queue expired, need to re-subscribe
+                    self._queue_id = None
+                    raise ConnectionError("Queue expired (404)")
         except aiohttp.ServerTimeoutError:
             pass  # Normal - poll timeout with no events
         return []
@@ -176,18 +184,18 @@ class VictrolaEventListener:
         if not self._queue_id:
             return
         try:
-            async with aiohttp.ClientSession() as session:
-                await session.post(
-                    f"{self._api.base_url}/api/event/modifyQueue",
-                    json={
-                        "queueId": self._queue_id,
-                        "subscribe": [],
-                        "unsubscribe": EVENT_SUBSCRIPTIONS,
-                        "_nocache": str(int(time.time() * 1000)),
-                    },
-                    headers={"Content-Type": "application/json"},
-                    timeout=aiohttp.ClientTimeout(total=5),
-                )
+            session = self._api.session
+            await session.post(
+                f"{self._api.base_url}/api/event/modifyQueue",
+                json={
+                    "queueId": self._queue_id,
+                    "subscribe": [],
+                    "unsubscribe": EVENT_SUBSCRIPTIONS,
+                    "_nocache": str(int(time.time() * 1000)),
+                },
+                headers={"Content-Type": "application/json"},
+                timeout=aiohttp.ClientTimeout(total=5),
+            )
         except (aiohttp.ClientError, TimeoutError, OSError):
             pass  # Best-effort cleanup; device may already be unreachable
 

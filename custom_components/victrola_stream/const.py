@@ -137,8 +137,3 @@ RCA_DELAY_STEP = 1
 BRIGHTNESS_MIN  = 0
 BRIGHTNESS_MAX  = 100
 BRIGHTNESS_STEP = 1
-
-# ─────────────────────────────────────────────
-# Roon Core ID (used for building Roon output IDs)
-# ─────────────────────────────────────────────
-DEFAULT_ROON_CORE_ID = "44fe722d-c19d-4786-ab03-e23feb2e6148"

@@ -32,7 +32,7 @@ class VictrolaMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
     """Victrola Stream media player - controls quickplay and volume."""
 
     _attr_has_entity_name   = True
-    _attr_name              = "Victrola Stream"
+    _attr_name              = None
     _attr_icon              = "mdi:turntable"
     _attr_supported_features = SUPPORTED_FEATURES
 

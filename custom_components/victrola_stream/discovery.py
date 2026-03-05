@@ -44,17 +44,17 @@ class VictrolaDiscovery:
 
     async def async_discover_all(self) -> None:
         """Safely discover speakers from all sources.
-        
+
         Called on startup only. Takes ~25 seconds.
         """
         _LOGGER.info("Starting speaker discovery across all sources...")
-        
-        try:
-            # 1. Save current state
-            original_autoplay = await self._api.async_get_autoplay()
-            original_source = await self._get_current_source()
-            _LOGGER.debug("Saved state: source=%s, autoplay=%s", original_source, original_autoplay)
 
+        # 1. Save current state before try block so finally can restore
+        original_autoplay = await self._api.async_get_autoplay()
+        original_source = await self._get_current_source()
+        _LOGGER.debug("Saved state: source=%s, autoplay=%s", original_source, original_autoplay)
+
+        try:
             # 2. Disable autoplay to prevent playback during discovery
             if original_autoplay:
                 await self._api.async_set_autoplay(False)
@@ -67,25 +67,28 @@ class VictrolaDiscovery:
             # 4. Update QuickPlay speakers (reads speakerQuickplay)
             await self._update_quickplay()
 
-            # 5. Restore original state (CRITICAL: end on original source)
-            if original_source:
-                await self._enable_source(original_source)
-                await asyncio.sleep(1)
-            if original_autoplay:
-                await self._api.async_set_autoplay(True)
-
-            total = sum(len(speakers) for speakers in self._speakers.values())
-            _LOGGER.info(
-                "Discovery complete: %d speakers (%s: %d, %s: %d, %s: %d, %s: %d)",
-                total,
-                SOURCE_SONOS, len(self._speakers[SOURCE_SONOS]),
-                SOURCE_ROON, len(self._speakers[SOURCE_ROON]),
-                SOURCE_UPNP, len(self._speakers[SOURCE_UPNP]),
-                SOURCE_BLUETOOTH, len(self._speakers[SOURCE_BLUETOOTH]),
-            )
-
         except Exception as err:
             _LOGGER.error("Discovery failed: %s", err)
+        finally:
+            # 5. Restore original state (CRITICAL: end on original source)
+            try:
+                if original_source:
+                    await self._enable_source(original_source)
+                    await asyncio.sleep(1)
+                if original_autoplay:
+                    await self._api.async_set_autoplay(True)
+            except Exception as err:
+                _LOGGER.error("Failed to restore state after discovery: %s", err)
+
+        total = sum(len(speakers) for speakers in self._speakers.values())
+        _LOGGER.info(
+            "Discovery complete: %d speakers (%s: %d, %s: %d, %s: %d, %s: %d)",
+            total,
+            SOURCE_SONOS, len(self._speakers[SOURCE_SONOS]),
+            SOURCE_ROON, len(self._speakers[SOURCE_ROON]),
+            SOURCE_UPNP, len(self._speakers[SOURCE_UPNP]),
+            SOURCE_BLUETOOTH, len(self._speakers[SOURCE_BLUETOOTH]),
+        )
 
     async def async_rediscover_current(self) -> None:
         """Rediscover speakers for currently active source only.
@@ -173,11 +176,12 @@ class VictrolaDiscovery:
     async def _enable_source(self, source: str) -> None:
         """Enable a specific source, disabling all others first."""
         source_to_api = {
-            SOURCE_SONOS:     "sonos",
-            SOURCE_ROON:      "roon",
-            SOURCE_UPNP:      "upnp",
-            SOURCE_BLUETOOTH: "bluetooth",
+            SOURCE_SONOS: "sonos", SOURCE_ROON: "roon",
+            SOURCE_UPNP: "upnp", SOURCE_BLUETOOTH: "bluetooth",
         }
+        for src, api_name in source_to_api.items():
+            if src != source:
+                await self._api.async_set_source_enabled(api_name, False)
         api_name = source_to_api.get(source)
         if api_name:
             await self._api.async_set_source_enabled(api_name, True)

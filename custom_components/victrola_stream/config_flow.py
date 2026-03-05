@@ -6,6 +6,7 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResult
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from .const import DOMAIN, CONF_VICTROLA_IP, CONF_VICTROLA_PORT, CONF_DEVICE_NAME, DEFAULT_PORT
 from .victrola_api import VictrolaAPI
 
@@ -13,7 +14,8 @@ _LOGGER = logging.getLogger(__name__)
 
 
 async def validate_connection(hass: HomeAssistant, ip: str, port: int) -> dict:
-    api = VictrolaAPI(ip, port)
+    session = async_get_clientsession(hass)
+    api = VictrolaAPI(ip, port, session=session)
     if await api.async_test_connection():
         return {"title": f"Victrola Stream ({ip})"}
     raise ConnectionError(f"Cannot connect to {ip}:{port}")
@@ -34,13 +36,16 @@ class VictrolaStreamConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 await self.async_set_unique_id(user_input[CONF_VICTROLA_IP])
                 self._abort_if_unique_id_configured()
                 return self.async_create_entry(title=info["title"], data=user_input)
-            except Exception:
+            except ConnectionError:
                 errors["base"] = "cannot_connect"
+            except Exception:
+                _LOGGER.exception("Unexpected error during Victrola setup")
+                errors["base"] = "unknown"
 
         return self.async_show_form(
             step_id="user",
             data_schema=vol.Schema({
-                vol.Required(CONF_VICTROLA_IP, default="192.168.35.247"): str,
+                vol.Required(CONF_VICTROLA_IP): str,
                 vol.Optional(CONF_VICTROLA_PORT, default=DEFAULT_PORT): int,
                 vol.Optional(CONF_DEVICE_NAME, default="Victrola Stream Pearl"): str,
             }),
