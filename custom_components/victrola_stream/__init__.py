@@ -13,10 +13,12 @@ from .discovery import VictrolaDiscovery
 from .state_store import VictrolaStateStore
 from .coordinator import VictrolaCoordinator
 from .event_listener import VictrolaEventListener
+from .stream_monitor import VictrolaStreamMonitor
 
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = [
+    Platform.BINARY_SENSOR,
     Platform.MEDIA_PLAYER,
     Platform.SELECT,
     Platform.NUMBER,
@@ -50,12 +52,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     event_listener = VictrolaEventListener(api, state_store, discovery, coordinator)
     await event_listener.async_start()
 
+    # Start persistent stream monitor (near-instant needle detection)
+    stream_monitor = VictrolaStreamMonitor(api, state_store, coordinator)
+    await stream_monitor.async_start()
+
     hass.data[DOMAIN][entry.entry_id] = {
         "api":            api,
         "discovery":      discovery,
         "state_store":    state_store,
         "coordinator":    coordinator,
         "event_listener": event_listener,
+        "stream_monitor": stream_monitor,
     }
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -63,8 +70,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    # Stop event listener cleanly
     entry_data = hass.data[DOMAIN].get(entry.entry_id, {})
+    # Stop stream monitor
+    monitor = entry_data.get("stream_monitor")
+    if monitor:
+        await monitor.async_stop()
+    # Stop event listener
     listener = entry_data.get("event_listener")
     if listener:
         await listener.async_stop()

@@ -9,7 +9,9 @@ CONF_DEVICE_NAME   = "device_name"
 
 # Defaults
 DEFAULT_PORT          = 80
+DEFAULT_STREAM_PORT   = 34435   # ADC FLAC/MP3 stream server (dynamic, may change on reboot)
 DEFAULT_SCAN_INTERVAL = 30
+STREAM_PROBE_TIMEOUT  = 1.5    # seconds to wait for audio data from stream server
 
 # ─────────────────────────────────────────────
 # Source types (HA-facing names)

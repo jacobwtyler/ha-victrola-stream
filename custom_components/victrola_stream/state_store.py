@@ -40,6 +40,7 @@ class VictrolaStateStore:
             "Roon": True, "Sonos": True, "UPnP": True, "Bluetooth": True,
         }
         self.connected: bool = False
+        self.is_streaming: bool = False  # True when ADC audio data is flowing
 
     def set_quickplay(self, source: str, speaker_name: str, speaker_id: str) -> None:
         self.quickplay_source = source
@@ -97,4 +98,5 @@ class VictrolaStateStore:
             "power_reason": self.power_reason,
             "source_enabled": self.source_enabled,
             "connected": self.connected,
+            "is_streaming": self.is_streaming,
         }

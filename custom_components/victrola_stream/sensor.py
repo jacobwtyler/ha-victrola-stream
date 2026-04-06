@@ -28,6 +28,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         VictrolaDefaultOutputSensor(data, entry, SOURCE_SONOS),
         VictrolaDefaultOutputSensor(data, entry, SOURCE_UPNP),
         VictrolaDefaultOutputSensor(data, entry, SOURCE_BLUETOOTH),
+        VictrolaPlaybackStatusSensor(data, entry),
     ]
     async_add_entities(entities)
 
@@ -240,4 +241,34 @@ class VictrolaDefaultOutputSensor(VictrolaBaseSensor):
             "speaker_id": info["id"] if info else None,
             "source": self._source,
             "note": "Polled from device via getRows - reflects actual device state",
+        }
+
+
+class VictrolaPlaybackStatusSensor(VictrolaBaseSensor):
+    """Playback status derived from power state and quickplay speaker."""
+    _attr_name = "Playback Status"
+    _attr_icon = "mdi:cast-audio"
+
+    def __init__(self, data, entry):
+        super().__init__(data, entry)
+        self._attr_unique_id = f"{entry.entry_id}_playback_status"
+
+    @property
+    def native_value(self) -> str:
+        if not self._state_store.connected:
+            return "Off"
+        if self._state_store.power_target == "networkStandby":
+            return "Standby"
+        if self._state_store.quickplay_speaker:
+            return f"Streaming to {self._state_store.quickplay_speaker}"
+        return "Idle"
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        return {
+            "speaker_name": self._state_store.quickplay_speaker,
+            "speaker_id": self._state_store.quickplay_speaker_id,
+            "source": self._state_store.quickplay_source,
+            "power_state": self._state_store.power_target,
+            "power_reason": self._state_store.power_reason,
         }

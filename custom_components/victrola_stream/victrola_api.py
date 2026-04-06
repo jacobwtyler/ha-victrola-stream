@@ -1,11 +1,14 @@
 """Victrola API - correct paths and payload formats from working rest_commands."""
 from __future__ import annotations
 
+import asyncio
 import aiohttp
 import logging
 import time
 from typing import Any
 from urllib.parse import quote
+
+from .const import DEFAULT_STREAM_PORT, STREAM_PROBE_TIMEOUT
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -18,6 +21,7 @@ class VictrolaAPI:
         self.port = port
         self.base_url = f"http://{host}:{port}"
         self._session = session
+        self._stream_port: int = DEFAULT_STREAM_PORT
 
     @property
     def session(self) -> aiohttp.ClientSession | None:
@@ -525,3 +529,55 @@ class VictrolaAPI:
             "activate",
             {"type": "bool_", "bool_": True},
         )
+
+    # ─────────────────────────────────────────────
+    # ADC Stream Probe
+    #
+    # The Victrola runs an Icecast-compatible stream server on a dynamic
+    # port (default 34435). It always accepts connections and returns
+    # HTTP 200 headers, but only sends audio bytes when the ADC is
+    # actively capturing (needle on record). We detect streaming by
+    # trying to read a small chunk with a short timeout.
+    # ─────────────────────────────────────────────
+
+    async def async_check_stream_active(self) -> bool:
+        """Check if the ADC stream is actively producing audio data.
+
+        The Icecast stream server always sends ~292 bytes of Ogg FLAC
+        container headers on connection, even when idle. When the needle
+        is on, it sends 100-200 KB/s of audio frames. We distinguish
+        the two by reading for the full probe timeout and checking if
+        total throughput exceeds 1 KB (well above the idle header size).
+        """
+        url = f"http://{self.host}:{self._stream_port}/stream.flac"
+        try:
+            timeout = aiohttp.ClientTimeout(
+                total=STREAM_PROBE_TIMEOUT + 1,
+                sock_read=STREAM_PROBE_TIMEOUT,
+            )
+            async with aiohttp.ClientSession() as probe_session:
+                async with probe_session.get(url, timeout=timeout) as resp:
+                    if resp.status != 200:
+                        return False
+                    total = 0
+                    async for chunk in resp.content.iter_any():
+                        total += len(chunk)
+                        if total > 1024:
+                            return True  # Audio data flowing
+                    # Stream ended before threshold — only headers
+                    return False
+        except asyncio.TimeoutError:
+            # Timeout with ≤1024 bytes = idle (just headers, no audio)
+            return False
+        except (aiohttp.ClientError, OSError) as err:
+            _LOGGER.debug("Stream probe failed on port %d: %s", self._stream_port, err)
+            return False
+
+    @property
+    def stream_port(self) -> int:
+        """Current stream server port."""
+        return self._stream_port
+
+    @stream_port.setter
+    def stream_port(self, port: int) -> None:
+        self._stream_port = port

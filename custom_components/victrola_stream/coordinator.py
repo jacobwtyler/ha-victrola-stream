@@ -49,6 +49,11 @@ class VictrolaCoordinator(DataUpdateCoordinator):
                     qp_state["current_quickplay_name"],
                     qp_state.get("current_quickplay_id", ""),
                 )
+            else:
+                # No preferred speaker — playback stopped or no quickplay active
+                self.state_store.quickplay_speaker = None
+                self.state_store.quickplay_speaker_id = None
+                self.state_store.quickplay_source = None
 
             # ── 2. settings:/victrola getRows → settings + default output IDs ──
             device_state = await self.api.async_get_current_default_outputs()
@@ -118,6 +123,9 @@ class VictrolaCoordinator(DataUpdateCoordinator):
             if player_state.get("power_target"):
                 self.state_store.power_target = player_state["power_target"]
                 self.state_store.power_reason = player_state.get("power_reason")
+
+            # Note: is_streaming is managed by VictrolaStreamMonitor
+            # (persistent connection, ~1-3s detection latency)
 
             return self.state_store.to_dict()
 
