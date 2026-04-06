@@ -49,6 +49,11 @@ class VictrolaCoordinator(DataUpdateCoordinator):
                     qp_state["current_quickplay_name"],
                     qp_state.get("current_quickplay_id", ""),
                 )
+            else:
+                # No preferred speaker — playback stopped or no quickplay active
+                self.state_store.quickplay_speaker = None
+                self.state_store.quickplay_speaker_id = None
+                self.state_store.quickplay_source = None
 
             # ── 2. settings:/victrola getRows → settings + default output IDs ──
             device_state = await self.api.async_get_current_default_outputs()

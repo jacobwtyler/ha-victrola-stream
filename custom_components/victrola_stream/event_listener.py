@@ -213,6 +213,7 @@ class VictrolaEventListener:
                     speakers = self._parse_quickplay_rows(rows)
                     self._discovery.update_from_quickplay(speakers)
                     self._store.available_quickplay_speakers = speakers
+                    found_preferred = False
                     for spk in speakers:
                         if spk.get("preferred"):
                             self._store.set_quickplay(
@@ -221,7 +222,20 @@ class VictrolaEventListener:
                                 spk["id"],
                             )
                             _LOGGER.info("QuickPlay changed → %s", spk["name"])
-                    changed = True
+                            found_preferred = True
+                    if not found_preferred:
+                        self._store.quickplay_speaker = None
+                        self._store.quickplay_speaker_id = None
+                        self._store.quickplay_source = None
+                        _LOGGER.info("QuickPlay cleared — no preferred speaker")
+                else:
+                    # Empty rows = playback stopped
+                    self._store.quickplay_speaker = None
+                    self._store.quickplay_speaker_id = None
+                    self._store.quickplay_source = None
+                    self._store.available_quickplay_speakers = []
+                    _LOGGER.info("QuickPlay cleared — empty speaker rows (playback stopped)")
+                changed = True
 
             # ── speakerSelection (default speaker) changed ─────────────
             elif path == "victrola:ui/speakerSelection":
