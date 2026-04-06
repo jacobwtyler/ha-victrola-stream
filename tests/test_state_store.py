@@ -133,7 +133,7 @@ class TestVictrolaStateStore:
             "default_outputs", "audio_quality", "audio_latency",
             "rca_mode", "rca_delay", "rca_fixed_volume", "knob_brightness",
             "autoplay", "volume", "muted", "power_target", "power_reason",
-            "source_enabled", "connected",
+            "source_enabled", "is_streaming", "connected",
         }
         assert set(d.keys()) == expected_keys
 

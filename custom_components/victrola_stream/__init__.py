@@ -16,6 +16,7 @@ from .event_listener import VictrolaEventListener
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = [
+    Platform.BINARY_SENSOR,
     Platform.MEDIA_PLAYER,
     Platform.SELECT,
     Platform.NUMBER,

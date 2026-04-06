@@ -259,13 +259,17 @@ class VictrolaPlaybackStatusSensor(VictrolaBaseSensor):
             return "Off"
         if self._state_store.power_target == "networkStandby":
             return "Standby"
-        if self._state_store.quickplay_speaker:
-            return f"Streaming to {self._state_store.quickplay_speaker}"
+        if self._state_store.is_streaming:
+            speaker = self._state_store.quickplay_speaker
+            if speaker:
+                return f"Streaming to {speaker}"
+            return "Streaming"
         return "Idle"
 
     @property
     def extra_state_attributes(self) -> dict:
         return {
+            "is_streaming": self._state_store.is_streaming,
             "speaker_name": self._state_store.quickplay_speaker,
             "speaker_id": self._state_store.quickplay_speaker_id,
             "source": self._state_store.quickplay_source,

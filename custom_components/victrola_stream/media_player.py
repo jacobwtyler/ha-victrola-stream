@@ -61,7 +61,7 @@ class VictrolaMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
         power = self._state_store.power_target
         if power == "networkStandby":
             return MediaPlayerState.IDLE
-        if self._state_store.quickplay_speaker:
+        if self._state_store.is_streaming:
             return MediaPlayerState.PLAYING
         return MediaPlayerState.IDLE
 

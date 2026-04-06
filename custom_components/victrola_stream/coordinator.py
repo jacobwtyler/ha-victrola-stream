@@ -124,6 +124,9 @@ class VictrolaCoordinator(DataUpdateCoordinator):
                 self.state_store.power_target = player_state["power_target"]
                 self.state_store.power_reason = player_state.get("power_reason")
 
+            # ── 5. ADC stream probe — detect active playback ──
+            self.state_store.is_streaming = await self.api.async_check_stream_active()
+
             return self.state_store.to_dict()
 
         except Exception as err:

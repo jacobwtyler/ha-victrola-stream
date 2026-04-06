@@ -39,6 +39,7 @@ class VictrolaStateStore:
         self.source_enabled: dict[str, bool] = {
             "Roon": True, "Sonos": True, "UPnP": True, "Bluetooth": True,
         }
+        self.is_streaming: bool = False
         self.connected: bool = False
 
     def set_quickplay(self, source: str, speaker_name: str, speaker_id: str) -> None:
@@ -96,5 +97,6 @@ class VictrolaStateStore:
             "power_target": self.power_target,
             "power_reason": self.power_reason,
             "source_enabled": self.source_enabled,
+            "is_streaming": self.is_streaming,
             "connected": self.connected,
         }

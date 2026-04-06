@@ -570,6 +570,37 @@ class VictrolaAPI:
             _LOGGER.error("get autoplay error: %s", err)
         return None
 
+    async def async_check_stream_active(self) -> bool:
+        """Detect active audio by probing the Icecast ADC stream on port 34435.
+
+        The Victrola always accepts connections and sends Ogg FLAC headers
+        (~292-997 bytes), but only sends >1KB/s of actual audio data when
+        the needle is on the record. We read for 2.5s and check total bytes.
+        """
+        try:
+            async with aiohttp.ClientSession() as session:
+                url = f"http://{self.host}:34435/stream"
+                async with session.get(
+                    url, timeout=aiohttp.ClientTimeout(total=5)
+                ) as resp:
+                    if resp.status != 200:
+                        return False
+                    total_bytes = 0
+                    deadline = __import__('time').time() + 2.5
+                    async for chunk in resp.content.iter_any():
+                        total_bytes += len(chunk)
+                        if __import__('time').time() >= deadline:
+                            break
+                    active = total_bytes > 1024
+                    _LOGGER.debug(
+                        "Stream probe: %d bytes in 2.5s → %s",
+                        total_bytes, "ACTIVE" if active else "idle",
+                    )
+                    return active
+        except (aiohttp.ClientError, TimeoutError, OSError, ConnectionError) as err:
+            _LOGGER.debug("Stream probe error: %s", err)
+            return False
+
     async def async_reboot(self) -> bool:
         """Reboot the Victrola device."""
         _LOGGER.warning("Sending reboot command to Victrola at %s", self.host)
