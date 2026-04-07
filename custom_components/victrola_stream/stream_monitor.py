@@ -54,9 +54,10 @@ PROBE_INTERVAL = 0.2
 # the connection is dead (half-open after device reboot) and reconnect.
 ZERO_BYTES_RECONNECT = 10
 # Port scan range for discovering the Icecast server after reboots.
-PORT_SCAN_START = 34000
-PORT_SCAN_END = 36000
-PORT_SCAN_TIMEOUT = 0.3
+# Firmware may allocate ports well outside the 34xxx range (seen: 42347).
+PORT_SCAN_START = 30000
+PORT_SCAN_END = 50000
+PORT_SCAN_TIMEOUT = 0.15
 # How often to retry port discovery when the stream server isn't found.
 PORT_DISCOVERY_INTERVAL = 15.0
 
