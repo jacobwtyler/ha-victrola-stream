@@ -6,6 +6,8 @@ from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity import EntityCategory
+from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import (
     DOMAIN, SOURCES,
@@ -15,6 +17,7 @@ from .const import (
     SOURCE_TO_DEFAULT_TYPE, SOURCE_TO_QUICKPLAY_TYPE,
     SOURCE_ROON, SOURCE_SONOS, SOURCE_UPNP, SOURCE_BLUETOOTH,
     VICTROLA_TYPE_SONOS_QUICKPLAY,
+    STARTUP_SOURCE_OPTIONS, STARTUP_SOURCE_LAST_KNOWN,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -24,17 +27,22 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     data = hass.data[DOMAIN][entry.entry_id]
+    startup_select = VictrolaStartupSourceSelect(data, entry)
     entities = [
         VictrolaAudioSourceSelect(data, entry),
         VictrolaAudioQualitySelect(data, entry),
         VictrolaAudioLatencySelect(data, entry),
         VictrolaRCAModeSelect(data, entry),
         VictrolaUnifiedQuickPlaySelect(data, entry),  # ONE unified select from live list
+        startup_select,
     ]
     # Default Output selects remain per-source (different semantics) - Bluetooth last
     for source in [SOURCE_ROON, SOURCE_SONOS, SOURCE_UPNP]:
         entities.append(VictrolaDefaultOutputSelect(data, entry, source))
     entities.append(VictrolaDefaultOutputSelect(data, entry, SOURCE_BLUETOOTH))
+
+    # Store startup select reference for coordinator to read
+    data["startup_source_select"] = startup_select
 
     async_add_entities(entities)
 
@@ -57,7 +65,7 @@ class VictrolaAudioSourceSelect(VictrolaBaseSelect):
     """Active source selector."""
     _attr_name    = "Audio Source"
     _attr_icon    = "mdi:audio-input-stereo-minijack"
-    _attr_options = SOURCES
+    _attr_options = ["None"] + SOURCES
 
     def __init__(self, data, entry):
         super().__init__(data, entry)
@@ -65,29 +73,39 @@ class VictrolaAudioSourceSelect(VictrolaBaseSelect):
 
     @property
     def current_option(self) -> str | None:
-        return self._state_store.current_source
+        return self._state_store.current_source or "None"
 
     async def async_select_option(self, option: str) -> None:
         """Switch to a new source - disable all others with verification."""
+        if option == "None":
+            _LOGGER.info("Disabling all audio sources")
+            for source in SOURCES:
+                await self._api.async_set_source_enabled(source.lower(), False)
+                self._state_store.set_source_enabled(source, False)
+            self._state_store.current_source = None
+            self.async_write_ha_state()
+            await self.coordinator.async_request_refresh()
+            return
+
         _LOGGER.info("Switching audio source to: %s", option)
-        
+
         # Disable ALL sources first (aggressively)
         for source in SOURCES:
             if source != option:
                 await self._api.async_set_source_enabled(source.lower(), False)
                 self._state_store.set_source_enabled(source, False)
-        
+
         # Wait for device to process disables
         await asyncio.sleep(1.0)
-        
+
         # Enable the selected source
         await self._api.async_set_source_enabled(option.lower(), True)
         self._state_store.set_source_enabled(option, True)
         self._state_store.current_source = option
-        
+
         # Wait for device to stabilize
         await asyncio.sleep(1.0)
-        
+
         # VERIFY: Check device state to ensure only one source enabled
         device_state = await self._api.async_get_current_default_outputs()
         enabled = []
@@ -95,7 +113,7 @@ class VictrolaAudioSourceSelect(VictrolaBaseSelect):
             key = f"{src.lower()}_enabled"
             if device_state.get(key):
                 enabled.append(src)
-        
+
         if len(enabled) > 1:
             _LOGGER.warning(
                 "Device has multiple sources enabled after switch: %s (wanted: %s). "
@@ -107,7 +125,7 @@ class VictrolaAudioSourceSelect(VictrolaBaseSelect):
                 if src != option:
                     await self._api.async_set_source_enabled(src.lower(), False)
                     await asyncio.sleep(0.5)
-        
+
         _LOGGER.info("Source changed to %s successfully", option)
         self.async_write_ha_state()
         await self.coordinator.async_request_refresh()
@@ -190,15 +208,22 @@ class VictrolaUnifiedQuickPlaySelect(VictrolaBaseSelect):
     @property
     def options(self) -> list[str]:
         names = self._discovery.get_quickplay_speaker_names()
-        return names if names else ["None"]
+        return ["None"] + names
 
     @property
     def current_option(self) -> str | None:
         """Current quickplay speaker - polled from device (preferred=True)."""
-        return self._state_store.quickplay_speaker
+        return self._state_store.quickplay_speaker or "None"
 
     async def async_select_option(self, option: str) -> None:
         """Send quickplay to selected speaker - starts audio immediately."""
+        if option == "None":
+            self._state_store.quickplay_speaker = None
+            self._state_store.quickplay_speaker_id = None
+            self._state_store.quickplay_source = None
+            self.async_write_ha_state()
+            return
+
         # Get speaker info including source
         speaker_info = self._discovery.get_quickplay_speaker(option)
         if not speaker_info:
@@ -234,16 +259,21 @@ class VictrolaDefaultOutputSelect(VictrolaBaseSelect):
     @property
     def options(self) -> list[str]:
         names = self._discovery.get_speaker_names(self._source)
-        return names if names else ["None"]
+        return ["None"] + names
 
     @property
     def current_option(self) -> str | None:
         """Current default output - polled from device via getRows."""
         info = self._state_store.get_default_output(self._source)
-        return info["name"] if info else None
+        return info["name"] if info else "None"
 
     async def async_select_option(self, option: str) -> None:
         """Set default output - no immediate playback."""
+        if option == "None":
+            self._state_store.default_outputs.pop(self._source, None)
+            self.async_write_ha_state()
+            return
+
         victrola_id = self._discovery.get_victrola_id(self._source, option)
         if not victrola_id:
             _LOGGER.error("No ID for %s / %s", self._source, option)
@@ -254,3 +284,40 @@ class VictrolaDefaultOutputSelect(VictrolaBaseSelect):
             self._state_store.set_default_output(self._source, option, victrola_id)
             self.async_write_ha_state()
             await self.coordinator.async_request_refresh()
+
+
+class VictrolaStartupSourceSelect(CoordinatorEntity, SelectEntity, RestoreEntity):
+    """Startup source preference — which source to enable after HA/device boot.
+
+    Persists across restarts via RestoreEntity.
+    The coordinator reads this on first refresh to apply the preference.
+    """
+    _attr_has_entity_name = True
+    _attr_name = "Startup Source"
+    _attr_icon = "mdi:power-settings"
+    _attr_options = STARTUP_SOURCE_OPTIONS
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, data: dict, entry: ConfigEntry):
+        super().__init__(data["coordinator"])
+        self._api = data["api"]
+        self._attr_unique_id = f"{entry.entry_id}_startup_source"
+        self._selected: str = STARTUP_SOURCE_LAST_KNOWN
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last_state = await self.async_get_last_state()
+        if last_state and last_state.state in STARTUP_SOURCE_OPTIONS:
+            self._selected = last_state.state
+
+    @property
+    def current_option(self) -> str:
+        return self._selected
+
+    @property
+    def device_info(self):
+        return {"identifiers": {(DOMAIN, self._api.host)}}
+
+    async def async_select_option(self, option: str) -> None:
+        self._selected = option
+        self.async_write_ha_state()

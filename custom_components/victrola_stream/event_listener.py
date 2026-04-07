@@ -224,12 +224,26 @@ class VictrolaEventListener:
                     found_preferred = False
                     for spk in speakers:
                         if spk.get("preferred"):
+                            # Derive source from speaker type
+                            spk_type = spk.get("type", "")
+                            if "UPnP" in spk_type:
+                                qp_source = SOURCE_UPNP
+                            elif "Roon" in spk_type:
+                                qp_source = SOURCE_ROON
+                            elif "Bluetooth" in spk_type:
+                                qp_source = SOURCE_BLUETOOTH
+                            else:
+                                qp_source = SOURCE_SONOS
+                            # Use display name with source suffix to match options list
+                            display_name = f"{spk['name']} ({qp_source})"
+                            if not self._discovery.get_quickplay_speaker(display_name):
+                                display_name = spk["name"]
                             self._store.set_quickplay(
-                                SOURCE_SONOS,
-                                spk["name"],
+                                qp_source,
+                                display_name,
                                 spk["id"],
                             )
-                            _LOGGER.info("QuickPlay changed → %s", spk["name"])
+                            _LOGGER.info("QuickPlay changed → %s", display_name)
                             found_preferred = True
                     if not found_preferred:
                         self._store.quickplay_speaker = None

@@ -45,8 +45,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     discovery   = VictrolaDiscovery(hass, api)
 
     coordinator = VictrolaCoordinator(hass, api, state_store, discovery)
-    # First refresh populates speaker list from device
+
+    hass.data[DOMAIN][entry.entry_id] = {
+        "api":            api,
+        "discovery":      discovery,
+        "state_store":    state_store,
+        "coordinator":    coordinator,
+    }
+
+    # First refresh runs discovery (but defers startup source until entities load)
     await coordinator.async_config_entry_first_refresh()
+
+    # Set up platforms (creates entities including RestoreEntity startup source select)
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    # NOW apply startup source preference (entity has restored its state)
+    await coordinator.async_apply_startup_source()
 
     # Start real-time event listener (push notifications from device)
     event_listener = VictrolaEventListener(api, state_store, discovery, coordinator)
@@ -56,16 +70,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     stream_monitor = VictrolaStreamMonitor(api, state_store, coordinator)
     await stream_monitor.async_start()
 
-    hass.data[DOMAIN][entry.entry_id] = {
-        "api":            api,
-        "discovery":      discovery,
-        "state_store":    state_store,
-        "coordinator":    coordinator,
-        "event_listener": event_listener,
-        "stream_monitor": stream_monitor,
-    }
+    hass.data[DOMAIN][entry.entry_id]["event_listener"] = event_listener
+    hass.data[DOMAIN][entry.entry_id]["stream_monitor"] = stream_monitor
 
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
 

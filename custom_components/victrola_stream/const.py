@@ -22,6 +22,18 @@ SOURCE_UPNP      = "UPnP"
 SOURCE_BLUETOOTH = "Bluetooth"
 SOURCES = [SOURCE_ROON, SOURCE_SONOS, SOURCE_UPNP, SOURCE_BLUETOOTH]
 
+# Startup source preference (what to enable on HA/device boot)
+STARTUP_SOURCE_LAST_KNOWN = "Last Known"
+STARTUP_SOURCE_NONE       = "None"
+STARTUP_SOURCE_OPTIONS = [
+    STARTUP_SOURCE_LAST_KNOWN,
+    STARTUP_SOURCE_NONE,
+    SOURCE_ROON,
+    SOURCE_SONOS,
+    SOURCE_UPNP,
+    SOURCE_BLUETOOTH,
+]
+
 # ─────────────────────────────────────────────
 # Victrola API - setData value types
 # ─────────────────────────────────────────────

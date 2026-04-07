@@ -56,13 +56,14 @@ class VictrolaMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
 
     @property
     def state(self) -> MediaPlayerState:
+        # Streaming trumps everything — stream monitor proves connectivity
+        if self._state_store.is_streaming:
+            return MediaPlayerState.PLAYING
         if not self._state_store.connected:
             return MediaPlayerState.OFF
         power = self._state_store.power_target
         if power == "networkStandby":
             return MediaPlayerState.IDLE
-        if self._state_store.is_streaming:
-            return MediaPlayerState.PLAYING
         return MediaPlayerState.IDLE
 
     @property

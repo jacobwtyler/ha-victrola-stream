@@ -49,10 +49,10 @@ class VictrolaDiscovery:
         """
         _LOGGER.info("Starting speaker discovery across all sources...")
 
-        # 1. Save current state before try block so finally can restore
+        # 1. Save current state — capture ALL enabled sources, not just first
         original_autoplay = await self._api.async_get_autoplay()
-        original_source = await self._get_current_source()
-        _LOGGER.debug("Saved state: source=%s, autoplay=%s", original_source, original_autoplay)
+        original_sources = await self._get_enabled_sources()
+        _LOGGER.debug("Saved state: sources=%s, autoplay=%s", original_sources, original_autoplay)
 
         try:
             # 2. Disable autoplay to prevent playback during discovery
@@ -70,11 +70,10 @@ class VictrolaDiscovery:
         except Exception as err:
             _LOGGER.error("Discovery failed: %s", err)
         finally:
-            # 5. Restore original state (CRITICAL: end on original source)
+            # 5. Restore ALL originally enabled sources
             try:
-                if original_source:
-                    await self._enable_source(original_source)
-                    await asyncio.sleep(1)
+                await self._restore_sources(original_sources)
+                await asyncio.sleep(1)
                 if original_autoplay:
                     await self._api.async_set_autoplay(True)
             except Exception as err:
@@ -96,7 +95,8 @@ class VictrolaDiscovery:
         Called when user presses Rediscover button or manually changes source.
         Takes 5-8 seconds depending on source.
         """
-        current_source = await self._get_current_source()
+        sources = await self._get_enabled_sources()
+        current_source = sources[0] if sources else None
         if not current_source:
             _LOGGER.warning("No source currently active, skipping rediscovery")
             return
@@ -186,18 +186,29 @@ class VictrolaDiscovery:
         if api_name:
             await self._api.async_set_source_enabled(api_name, True)
 
-    async def _get_current_source(self) -> str | None:
-        """Determine which source is currently enabled."""
+    async def _get_enabled_sources(self) -> list[str]:
+        """Return list of ALL currently enabled sources."""
         state = await self._api.async_get_current_default_outputs()
+        sources = []
         if state.get("roon_enabled"):
-            return SOURCE_ROON
+            sources.append(SOURCE_ROON)
         if state.get("sonos_enabled"):
-            return SOURCE_SONOS
+            sources.append(SOURCE_SONOS)
         if state.get("upnp_enabled"):
-            return SOURCE_UPNP
+            sources.append(SOURCE_UPNP)
         if state.get("bluetooth_enabled"):
-            return SOURCE_BLUETOOTH
-        return None
+            sources.append(SOURCE_BLUETOOTH)
+        return sources
+
+    async def _restore_sources(self, sources: list[str]) -> None:
+        """Restore all previously enabled sources."""
+        source_to_api = {
+            SOURCE_SONOS: "sonos", SOURCE_ROON: "roon",
+            SOURCE_UPNP: "upnp", SOURCE_BLUETOOTH: "bluetooth",
+        }
+        for src, api_name in source_to_api.items():
+            should_enable = src in sources
+            await self._api.async_set_source_enabled(api_name, should_enable)
 
     # ── Public accessors for select entities ─────────────────────────────
 

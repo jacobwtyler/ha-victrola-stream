@@ -299,9 +299,10 @@ class VictrolaAPI:
                             if row.get("preferred"):
                                 result["current_quickplay_name"] = row.get("title")
                                 result["current_quickplay_id"] = row.get("id")
+                                result["current_quickplay_type"] = row.get("type")
                                 _LOGGER.debug(
-                                    "Current quickplay speaker: %s (%s)",
-                                    row.get("title"), row.get("id")
+                                    "Current quickplay speaker: %s (%s) type=%s",
+                                    row.get("title"), row.get("id"), row.get("type")
                                 )
                         return result
         except (aiohttp.ClientError, TimeoutError, OSError) as err:
@@ -336,7 +337,7 @@ class VictrolaAPI:
         return result
 
     async def async_get_rows(self, path: str, from_idx: int, to_idx: int) -> list:
-        """Fetch getRows from device."""
+        """Fetch getRows from device (value-only format, no path names)."""
         try:
             session = self._session
             async with session.post(
@@ -352,79 +353,129 @@ class VictrolaAPI:
             _LOGGER.error("getRows %s error: %s", path, err)
         return []
 
-    async def async_get_current_default_outputs(self) -> dict:
-        """Read current default output IDs from settings:/victrola getRows.
-        
-        Row mapping (discovered via firmware analysis):
-          Row  1: roonEnabled (bool)
-          Row  2: current Sonos default output ID (string)
-          Row  3: current Roon default output ID (string)
-          Row  4: sonosEnabled (bool)
-          Row  5: upnpEnabled (bool)
-          Row  6: bluetoothEnabled (bool)
-          Row  7: audio quality (forceLowBitrate)
-          Row 10: knob brightness (i32_)
-          Row 11: autoplay (bool)
-          Row 12: bluetooth default output path ref (string - e.g. "settings:/victrola/bluetoothEnabled")
-          Row 13: unknown bool
-          Row 14: unknown bool
-          Row 15: current UPnP default output ID (string)
-          Row 18: audio latency (adchlsLatency)
-          
-          speakerSelection getRows:
-          Row  4: currently selected/checked speaker slot (bool true)
+    async def _get_rows_by_path(self, path: str) -> dict:
+        """Fetch getRows with full metadata and index by path name.
+
+        Uses GET with roles=@all to get path names for each row, then builds
+        a dict mapping path → value object for robust lookups.
         """
-        rows = await self.async_get_rows("settings:/victrola", 0, 19)
+        try:
+            url = (
+                f"{self.base_url}/api/getRows?path={quote(path)}"
+                f"&roles=%40all&from=0&to=65535&type=structure"
+                f"&_nocache={int(time.time() * 1000)}"
+            )
+            session = self._session
+            async with session.get(
+                url, timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                if r.status == 200:
+                    data = await r.json(content_type=None)
+                    result = {}
+                    for row in data.get("rows", []):
+                        if not isinstance(row, dict):
+                            continue
+                        row_path = row.get("path")
+                        if row_path:
+                            val = row.get("value")
+                            if val:
+                                result[row_path] = val
+                    return result
+        except (aiohttp.ClientError, TimeoutError, OSError) as err:
+            _LOGGER.error("getRows (by path) %s error: %s", path, err)
+        return {}
+
+    async def async_get_rca_settings(self) -> dict:
+        """Read RCA/ADC settings from settings:/adchls.
+
+        Key paths:
+          settings:/adchls/dacMode      — adchlsDACMode (switching/simultaneous)
+          settings:/adchls/dacDelay     — i32 (0-500 ms)
+          settings:/adchls/fixedVolume  — bool (RCA fixed volume / volume control)
+        """
+        rows_by_path = await self._get_rows_by_path("settings:/adchls")
         result = {}
 
-        def _str_val(row):
-            if row and row[0] and row[0].get("type") == "string_":
-                return row[0].get("string_")
+        mode_val = rows_by_path.get("settings:/adchls/dacMode")
+        if mode_val:
+            result["rca_mode_api"] = mode_val.get("adchlsDACMode")
+
+        delay_val = rows_by_path.get("settings:/adchls/dacDelay")
+        if delay_val and delay_val.get("type") == "i32_":
+            result["rca_delay"] = delay_val.get("i32_")
+
+        vol_val = rows_by_path.get("settings:/adchls/fixedVolume")
+        if vol_val and vol_val.get("type") == "bool_":
+            result["rca_fixed_volume"] = vol_val.get("bool_")
+
+        _LOGGER.debug("RCA settings: %s", result)
+        return result
+
+    async def async_get_current_default_outputs(self) -> dict:
+        """Read current settings from settings:/victrola getRows.
+
+        Uses path-based matching (rows are sorted alphabetically by path).
+        Actual row paths (verified from device):
+          settings:/victrola/autoplay              — bool (autoplay toggle)
+          settings:/victrola/autoplayGroup          — string (Sonos default output ID)
+          settings:/victrola/autoplayRoonOutput     — string (Roon default output ID)
+          settings:/victrola/bluetoothEnabled       — bool
+          settings:/victrola/forceLowBitrate        — enum (audio quality)
+          settings:/victrola/lightBrightness        — i32 (knob brightness 0-100)
+          settings:/victrola/previousSource         — string (previous source path ref)
+          settings:/victrola/roonEnabled            — bool
+          settings:/victrola/savedOutput            — string (UPnP default output ID)
+          settings:/victrola/sonosEnabled           — bool
+          settings:/victrola/upnpEnabled            — bool
+          settings:/victrola/wirelessAudioDelay     — enum (audio latency)
+        """
+        rows_by_path = await self._get_rows_by_path("settings:/victrola")
+        result = {}
+
+        def _bool(path: str):
+            v = rows_by_path.get(path)
+            if v and v.get("type") == "bool_":
+                return v.get("bool_")
             return None
 
-        def _bool_val(row):
-            if row and row[0] and row[0].get("type") == "bool_":
-                return row[0].get("bool_")
+        def _str(path: str):
+            v = rows_by_path.get(path)
+            if v and v.get("type") == "string_":
+                return v.get("string_")
             return None
 
-        def _typed_val(row, key):
-            if row and row[0] and key in row[0]:
-                return row[0].get(key)
-            return None
+        # Source enabled flags
+        result["roon_enabled"] = _bool("settings:/victrola/roonEnabled")
+        result["sonos_enabled"] = _bool("settings:/victrola/sonosEnabled")
+        result["upnp_enabled"] = _bool("settings:/victrola/upnpEnabled")
+        result["bluetooth_enabled"] = _bool("settings:/victrola/bluetoothEnabled")
 
-        if len(rows) > 2:
-            result["sonos_default_id"] = _str_val(rows[2])
-        if len(rows) > 3:
-            result["roon_default_id"] = _str_val(rows[3])
-        if len(rows) > 15:
-            result["upnp_default_id"] = _str_val(rows[15])
-        # Row 12: bluetooth default - stored as path string, resolve it
-        if len(rows) > 12:
-            bt_path = _str_val(rows[12])
-            if bt_path and bt_path != "settings:/victrola/bluetoothEnabled":
-                # When a BT device is selected, row 12 contains its ID
-                result["bluetooth_default_id"] = bt_path
-            elif bt_path == "settings:/victrola/bluetoothEnabled":
-                # This is the default/unset state for bluetooth
-                result["bluetooth_default_id"] = None
-        # Also re-read settings from rows for cross-validation
-        if len(rows) > 1:
-            result["roon_enabled"] = _bool_val(rows[1])
-        if len(rows) > 4:
-            result["sonos_enabled"] = _bool_val(rows[4])
-        if len(rows) > 5:
-            result["upnp_enabled"] = _bool_val(rows[5])
-        if len(rows) > 6:
-            result["bluetooth_enabled"] = _bool_val(rows[6])
-        if len(rows) > 7:
-            result["audio_quality_api"] = _typed_val(rows[7], "forceLowBitrate")
-        if len(rows) > 10:
-            if rows[10] and rows[10][0]:
-                result["knob_brightness"] = rows[10][0].get("i32_")
-        if len(rows) > 11:
-            result["autoplay"] = _bool_val(rows[11])
-        if len(rows) > 18:
-            result["audio_latency_api"] = _typed_val(rows[18], "adchlsLatency")
+        # Default output IDs
+        result["sonos_default_id"] = _str("settings:/victrola/autoplayGroup")
+        result["roon_default_id"] = _str("settings:/victrola/autoplayRoonOutput")
+        result["upnp_default_id"] = _str("settings:/victrola/savedOutput")
+        # previousSource stores last-active source path, not BT default
+        prev_src = _str("settings:/victrola/previousSource")
+        if prev_src and not prev_src.startswith("settings:/victrola/"):
+            result["bluetooth_default_id"] = prev_src
+        else:
+            result["bluetooth_default_id"] = None
+
+        # Audio settings
+        aq = rows_by_path.get("settings:/victrola/forceLowBitrate")
+        if aq:
+            result["audio_quality_api"] = aq.get("forceLowBitrate")
+        al = rows_by_path.get("settings:/victrola/wirelessAudioDelay")
+        if al:
+            result["audio_latency_api"] = al.get("adchlsLatency")
+
+        # Knob brightness
+        kb = rows_by_path.get("settings:/victrola/lightBrightness")
+        if kb and kb.get("type") == "i32_":
+            result["knob_brightness"] = kb.get("i32_")
+
+        # Autoplay
+        result["autoplay"] = _bool("settings:/victrola/autoplay")
 
         _LOGGER.debug("Current default outputs: %s", result)
         return result
@@ -543,31 +594,43 @@ class VictrolaAPI:
     async def async_check_stream_active(self) -> bool:
         """Check if the ADC stream is actively producing audio data.
 
-        The Icecast stream server always sends ~292 bytes of Ogg FLAC
-        container headers on connection, even when idle. When the needle
-        is on, it sends 100-200 KB/s of audio frames. We distinguish
-        the two by reading for the full probe timeout and checking if
-        total throughput exceeds 1 KB (well above the idle header size).
+        The Icecast stream server continuously sends data even when idle
+        (~256 bytes/sec of keep-alive frames). When the needle is on, it
+        sends ~100-200 KB/s of real audio. We measure throughput over the
+        probe window and check if it exceeds 2000 bytes/sec.
         """
-        url = f"http://{self.host}:{self._stream_port}/stream.flac"
+        url = f"http://{self.host}:{self._stream_port}/stream"
         try:
             timeout = aiohttp.ClientTimeout(
-                total=STREAM_PROBE_TIMEOUT + 1,
-                sock_read=STREAM_PROBE_TIMEOUT,
+                total=STREAM_PROBE_TIMEOUT + 2,
+                sock_read=STREAM_PROBE_TIMEOUT + 1,
             )
             async with aiohttp.ClientSession() as probe_session:
                 async with probe_session.get(url, timeout=timeout) as resp:
                     if resp.status != 200:
                         return False
                     total = 0
-                    async for chunk in resp.content.iter_any():
-                        total += len(chunk)
-                        if total > 1024:
-                            return True  # Audio data flowing
-                    # Stream ended before threshold — only headers
-                    return False
+                    start = asyncio.get_event_loop().time()
+                    try:
+                        async for chunk in resp.content.iter_any():
+                            total += len(chunk)
+                            elapsed = asyncio.get_event_loop().time() - start
+                            if elapsed >= STREAM_PROBE_TIMEOUT:
+                                break
+                    except asyncio.TimeoutError:
+                        pass
+                    elapsed = asyncio.get_event_loop().time() - start
+                    if elapsed <= 0:
+                        return False
+                    rate = total / elapsed
+                    active = rate > 2000  # Well above idle ~256 B/s
+                    _LOGGER.debug(
+                        "Stream probe: %d bytes in %.1fs = %.0f B/s → %s",
+                        total, elapsed, rate,
+                        "ACTIVE" if active else "idle",
+                    )
+                    return active
         except asyncio.TimeoutError:
-            # Timeout with ≤1024 bytes = idle (just headers, no audio)
             return False
         except (aiohttp.ClientError, OSError) as err:
             _LOGGER.debug("Stream probe failed on port %d: %s", self._stream_port, err)

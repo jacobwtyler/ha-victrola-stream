@@ -9,7 +9,7 @@ from .const import (
 
 class VictrolaStateStore:
     def __init__(self):
-        self.current_source: str = "Roon"
+        self.current_source: str | None = None
         self.current_default_speaker_name: str | None = None  # from ui: getRows (authoritative)
 
         # QuickPlay: now POLLED from device via speakerQuickplay getRows (preferred=True)
@@ -37,7 +37,7 @@ class VictrolaStateStore:
         self.power_reason: str | None = None
 
         self.source_enabled: dict[str, bool] = {
-            "Roon": True, "Sonos": True, "UPnP": True, "Bluetooth": True,
+            "Roon": False, "Sonos": False, "UPnP": False, "Bluetooth": False,
         }
         self.connected: bool = False
         self.is_streaming: bool = False  # True when ADC audio data is flowing

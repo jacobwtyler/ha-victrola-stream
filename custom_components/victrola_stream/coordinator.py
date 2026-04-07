@@ -1,14 +1,17 @@
 """Coordinator - 30s polling fallback. Real-time updates via event_listener."""
 from __future__ import annotations
+import asyncio
 from datetime import timedelta
 import logging
 from typing import Any
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from .const import (
-    DOMAIN, DEFAULT_SCAN_INTERVAL,
+    DOMAIN, DEFAULT_SCAN_INTERVAL, SOURCES,
     AUDIO_QUALITY_API_TO_LABEL, AUDIO_LATENCY_API_TO_LABEL,
+    RCA_MODE_API_TO_LABEL,
     SOURCE_ROON, SOURCE_SONOS, SOURCE_UPNP, SOURCE_BLUETOOTH,
+    STARTUP_SOURCE_LAST_KNOWN, STARTUP_SOURCE_NONE,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -44,9 +47,23 @@ class VictrolaCoordinator(DataUpdateCoordinator):
                 # Update discovery QuickPlay cache with source labels
                 await self.discovery._update_quickplay()
             if qp_state.get("current_quickplay_name"):
+                qp_source = self._source_from_type(
+                    qp_state.get("current_quickplay_type", "")
+                )
+                # Use display name (with source suffix) to match options list
+                raw_name = qp_state["current_quickplay_name"]
+                display_name = f"{raw_name} ({qp_source})"
+                # Verify the display name exists in discovery cache;
+                # fall back to raw name if not found (shouldn't happen)
+                if not self.discovery.get_quickplay_speaker(display_name):
+                    _LOGGER.debug(
+                        "QuickPlay display name '%s' not in discovery cache, "
+                        "using raw name '%s'", display_name, raw_name
+                    )
+                    display_name = raw_name
                 self.state_store.set_quickplay(
-                    SOURCE_SONOS,
-                    qp_state["current_quickplay_name"],
+                    qp_source,
+                    display_name,
                     qp_state.get("current_quickplay_id", ""),
                 )
             else:
@@ -85,16 +102,22 @@ class VictrolaCoordinator(DataUpdateCoordinator):
                         if val:
                             enabled_sources.append(source)
                 
-                # Only update current_source if exactly one is enabled
+                # Determine current_source from enabled toggles + quickplay hint
                 if len(enabled_sources) == 1:
                     self.state_store.current_source = enabled_sources[0]
                 elif len(enabled_sources) == 0:
                     self.state_store.current_source = None
                     _LOGGER.warning("No audio sources enabled!")
                 else:
-                    # Multiple sources enabled - device is in bad state, log but don't change
-                    _LOGGER.warning("Multiple sources enabled: %s - keeping current: %s", 
-                                    enabled_sources, self.state_store.current_source)
+                    # Multiple sources enabled — use quickplay source if valid,
+                    # then keep current if valid, otherwise first enabled
+                    qp_src = self.state_store.quickplay_source
+                    if qp_src and qp_src in enabled_sources:
+                        self.state_store.current_source = qp_src
+                    elif self.state_store.current_source not in enabled_sources:
+                        self.state_store.current_source = enabled_sources[0]
+                    _LOGGER.debug("Multiple sources enabled: %s - current: %s (qp: %s)",
+                                  enabled_sources, self.state_store.current_source, qp_src)
 
                 # Default output IDs → register in discovery + store
                 id_map = {
@@ -110,6 +133,18 @@ class VictrolaCoordinator(DataUpdateCoordinator):
                         self.state_store.set_default_output(
                             source, name or speaker_id, speaker_id
                         )
+
+            # ── 2b. settings:/adchls → RCA settings ──
+            rca_state = await self.api.async_get_rca_settings()
+            if rca_state:
+                if rca_state.get("rca_mode_api"):
+                    self.state_store.set_rca_mode(
+                        RCA_MODE_API_TO_LABEL.get(rca_state["rca_mode_api"], "Switching")
+                    )
+                if rca_state.get("rca_delay") is not None:
+                    self.state_store.set_rca_delay(rca_state["rca_delay"])
+                if rca_state.get("rca_fixed_volume") is not None:
+                    self.state_store.rca_fixed_volume = rca_state["rca_fixed_volume"]
 
             # ── 3. ui: getRows → authoritative default speaker name ──
             ui_state = await self.api.async_get_ui_state()
@@ -132,3 +167,67 @@ class VictrolaCoordinator(DataUpdateCoordinator):
         except Exception as err:
             self.state_store.connected = False
             raise UpdateFailed(f"Cannot reach Victrola: {err}")
+
+    @staticmethod
+    def _source_from_type(spk_type: str) -> str:
+        """Derive source from speaker type string (e.g. 'UPnP' → SOURCE_UPNP)."""
+        if not spk_type:
+            return SOURCE_SONOS
+        t = spk_type.lower()
+        if "upnp" in t:
+            return SOURCE_UPNP
+        if "roon" in t:
+            return SOURCE_ROON
+        if "bluetooth" in t or "bt" in t:
+            return SOURCE_BLUETOOTH
+        return SOURCE_SONOS
+
+    async def async_apply_startup_source(self) -> None:
+        """Apply startup source preference after discovery completes.
+
+        Reads the 'Startup Source' select entity (persisted via RestoreEntity).
+        Enables the configured source, disables others, and quickplays if UPnP.
+        """
+        try:
+            entry_data = self.hass.data.get(DOMAIN, {})
+            startup_select = None
+            for data in entry_data.values():
+                if isinstance(data, dict):
+                    startup_select = data.get("startup_source_select")
+                    if startup_select:
+                        break
+
+            pref = STARTUP_SOURCE_LAST_KNOWN
+            if startup_select:
+                pref = startup_select.current_option or STARTUP_SOURCE_LAST_KNOWN
+
+            _LOGGER.info("Startup source preference: %s", pref)
+
+            if pref == STARTUP_SOURCE_LAST_KNOWN:
+                # Don't change anything — keep whatever the device has
+                return
+            if pref == STARTUP_SOURCE_NONE:
+                # Disable all sources
+                for src in SOURCES:
+                    await self.api.async_set_source_enabled(src.lower(), False)
+                _LOGGER.info("Startup: disabled all sources")
+                return
+
+            # Enable the preferred source, disable others
+            for src in SOURCES:
+                await self.api.async_set_source_enabled(
+                    src.lower(), src == pref
+                )
+            _LOGGER.info("Startup: enabled %s, disabled others", pref)
+
+            # If UPnP, also quickplay to establish stream session
+            if pref == SOURCE_UPNP:
+                await asyncio.sleep(2)  # Let source switch settle
+                state = await self.api.async_get_current_default_outputs()
+                upnp_id = state.get("upnp_default_id")
+                if upnp_id:
+                    _LOGGER.info("Startup quickplay to UPnP default: %s", upnp_id)
+                    await self.api.async_quickplay("upnp", upnp_id)
+
+        except Exception as err:
+            _LOGGER.warning("Startup source application failed: %s", err)

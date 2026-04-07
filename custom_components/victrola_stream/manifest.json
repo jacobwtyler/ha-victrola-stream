@@ -1,10 +1,12 @@
 {
   "domain": "victrola_stream",
   "name": "Victrola Stream",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "documentation": "https://github.com/jacobwtyler/ha-victrola-stream",
   "issue_tracker": "https://github.com/jacobwtyler/ha-victrola-stream/issues",
-  "codeowners": ["@jacobwtyler"],
+  "codeowners": [
+    "@jacobwtyler"
+  ],
   "config_flow": true,
   "dependencies": [],
   "requirements": [],
