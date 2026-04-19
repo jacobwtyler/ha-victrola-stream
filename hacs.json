@@ -1,5 +1,5 @@
 {
   "name": "Victrola Stream",
   "render_readme": true,
-  "domains": ["media_player", "select", "number", "button", "sensor", "switch"]
+  "domains": ["media_player", "select", "number", "button", "sensor", "switch", "binary_sensor"]
 }
